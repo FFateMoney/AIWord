@@ -1,3 +1,4 @@
+from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 
 from word_ast.utils.units import pt_to_half_points
@@ -10,6 +11,20 @@ def _color_to_hex(color) -> str | None:
     if rgb is None:
         return None
     return f"#{rgb}"
+
+
+def _read_east_asia_font(font) -> str | None:
+    """Read the East Asian font name from the underlying XML element."""
+    try:
+        rPr = font._element.rPr
+        if rPr is None:
+            return None
+        rFonts = rPr.find(qn('w:rFonts'))
+        if rFonts is None:
+            return None
+        return rFonts.get(qn('w:eastAsia'))
+    except (AttributeError, TypeError):
+        return None
 
 
 def _font_to_overrides(font) -> dict:
@@ -32,8 +47,12 @@ def _font_to_overrides(font) -> dict:
     if size is not None:
         overrides["size"] = size
 
-    if font.name:
-        overrides["font"] = {"ascii": font.name, "eastAsia": font.name}
+    ascii_font = font.name
+    ea_font = _read_east_asia_font(font)
+    if ascii_font:
+        overrides["font_ascii"] = ascii_font
+    if ea_font:
+        overrides["font_east_asia"] = ea_font
 
     return overrides
 

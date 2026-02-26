@@ -1,2 +1,5 @@
 __pycache__/
 *.pyc
+word_ast.egg-info/
+__pycache__/
+.pytest_cache/
