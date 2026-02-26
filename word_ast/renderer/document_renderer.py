@@ -25,14 +25,15 @@ def render_ast(ast_or_path: dict | str | Path, output_path: str | Path):
         ast = ast_or_path
 
     doc = Document()
-    render_styles(doc, ast["document"].get("styles", {}))
+    styles = ast["document"].get("styles", {})
+    render_styles(doc, styles)
     _render_meta(doc, ast["document"].get("meta", {}))
 
     body = ast["document"].get("body", [])
     for block in body:
         t = block.get("type")
         if t == "Paragraph":
-            render_paragraph(doc, block)
+            render_paragraph(doc, block, styles)
         elif t == "Table":
             render_table(doc, block)
 

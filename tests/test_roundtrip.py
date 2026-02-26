@@ -29,3 +29,29 @@ def test_roundtrip_text_and_table(tmp_path: Path):
     assert rebuilt.paragraphs[0].text == "Hello"
     assert rebuilt.tables[0].cell(0, 0).text == "A"
     assert rebuilt.tables[0].cell(0, 1).text == "B"
+
+
+def test_render_uses_style_name_fallback_for_style_id(tmp_path: Path):
+    out = tmp_path / "out-heading.docx"
+
+    ast = {
+        "schema_version": "1.0",
+        "document": {
+            "meta": {},
+            "styles": {
+                "1": {"style_id": "1", "name": "Heading 1", "type": "paragraph", "based_on": "Normal"},
+                "a": {"style_id": "a", "name": "Normal", "type": "paragraph", "based_on": None},
+            },
+            "body": [
+                {"id": "p0", "type": "Paragraph", "style": "1", "content": [{"type": "Text", "text": "Title"}]},
+                {"id": "p1", "type": "Paragraph", "style": "a", "content": [{"type": "Text", "text": "Body"}]},
+            ],
+            "passthrough": {},
+        },
+    }
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    assert rebuilt.paragraphs[0].style.name == "Heading 1"
+    assert rebuilt.paragraphs[1].style.name == "Normal"
