@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from docx import Document
+from docx.shared import Pt, RGBColor
 
 from word_ast import parse_docx, render_ast
 
@@ -55,3 +56,29 @@ def test_render_uses_style_name_fallback_for_style_id(tmp_path: Path):
     rebuilt = Document(out)
     assert rebuilt.paragraphs[0].style.name == "Heading 1"
     assert rebuilt.paragraphs[1].style.name == "Normal"
+
+
+def test_roundtrip_preserves_paragraph_style_font_defaults(tmp_path: Path):
+    src = tmp_path / "styled.docx"
+    out = tmp_path / "styled-out.docx"
+
+    doc = Document()
+    heading_style = doc.styles["Heading 1"]
+    heading_style.font.name = "Arial"
+    heading_style.font.size = Pt(24)
+    heading_style.font.color.rgb = RGBColor(0, 0, 0)
+    heading_style.font.bold = True
+
+    heading = doc.add_paragraph("Styled title")
+    heading.style = heading_style
+    doc.save(src)
+
+    ast = parse_docx(src)
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    run = rebuilt.paragraphs[0].runs[0]
+    assert run.font.name == "Arial"
+    assert run.font.size.pt == 24
+    assert str(run.font.color.rgb) == "000000"
+    assert run.bold is True
