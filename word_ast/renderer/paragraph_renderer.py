@@ -3,13 +3,28 @@ from docx.shared import RGBColor, Pt
 from word_ast.utils.units import half_points_to_pt
 
 
-def render_paragraph(doc, block: dict):
-    paragraph = doc.add_paragraph()
-    if block.get("style"):
+def _apply_paragraph_style(paragraph, style_id: str | None, styles: dict | None):
+    if not style_id:
+        return
+
+    candidates = [style_id]
+    if isinstance(styles, dict):
+        style_def = styles.get(style_id)
+        style_name = style_def.get("name") if isinstance(style_def, dict) else None
+        if style_name:
+            candidates.append(style_name)
+
+    for candidate in candidates:
         try:
-            paragraph.style = block["style"]
+            paragraph.style = candidate
+            return
         except Exception:
-            pass
+            continue
+
+
+def render_paragraph(doc, block: dict, styles: dict | None = None):
+    paragraph = doc.add_paragraph()
+    _apply_paragraph_style(paragraph, block.get("style"), styles)
 
     for piece in block.get("content", []):
         if piece.get("type") != "Text":
