@@ -28,6 +28,6 @@ def parse_styles(doc) -> dict:
             "style_id": style.style_id,
             "name": style.name,
             "type": _normalize_style_type(style.type),
-            "based_on": style.base_style.style_id if style.base_style else None,
+            "based_on": getattr(getattr(style, "base_style", None), "style_id", None),
         }
     return styles
