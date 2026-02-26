@@ -1,3 +1,4 @@
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import RGBColor, Pt
 
@@ -54,7 +55,6 @@ def render_paragraph(doc, block: dict, styles: dict | None = None):
             rPr = run._element.get_or_add_rPr()
             rFonts = rPr.find(qn('w:rFonts'))
             if rFonts is None:
-                from docx.oxml import OxmlElement
                 rFonts = OxmlElement('w:rFonts')
                 rPr.append(rFonts)
             rFonts.set(qn('w:eastAsia'), overrides["font_east_asia"])
