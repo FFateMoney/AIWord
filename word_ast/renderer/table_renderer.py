@@ -17,7 +17,7 @@ def _apply_table_style(table, style_id: str | None, styles: dict | None):
         try:
             table.style = candidate
             return
-        except Exception:
+        except (KeyError, ValueError):
             continue
 
 

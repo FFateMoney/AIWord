@@ -460,6 +460,10 @@ def test_roundtrip_table_cell_font_preserved(tmp_path: Path):
     run.font.size = Pt(12)
     rPr = run._element.get_or_add_rPr()
     rFonts = rPr.find(qn('w:rFonts'))
+    if rFonts is None:
+        from docx.oxml import OxmlElement
+        rFonts = OxmlElement('w:rFonts')
+        rPr.append(rFonts)
     rFonts.set(qn('w:eastAsia'), '宋体')
     doc.save(src)
 
