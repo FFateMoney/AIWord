@@ -1,12 +1,20 @@
+import base64
+import io
 import zipfile
 from pathlib import Path
 
 from docx import Document
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt, RGBColor, Inches
 from lxml import etree
 
 from word_ast import parse_docx, render_ast
+
+# Minimal 1×1 transparent PNG used in image round-trip tests
+_PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8"
+    "z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg=="
+)
 
 
 def test_roundtrip_text_and_table(tmp_path: Path):
@@ -341,3 +349,59 @@ def test_roundtrip_heading_theme_color_not_reapplied(tmp_path: Path):
                         f"explicit <w:color>, but found val="
                         f"{color_el.get(qn('w:val')) if color_el is not None else None}"
                     )
+
+
+def test_roundtrip_table_style_preserved(tmp_path: Path):
+    """Table style (e.g. 'Table Grid') must survive a parse → render round-trip
+    so that cell borders remain visible in the rendered document."""
+    src = tmp_path / "table_style.docx"
+    out = tmp_path / "table_style_out.docx"
+
+    doc = Document()
+    table = doc.add_table(rows=2, cols=2)
+    table.style = "Table Grid"
+    table.cell(0, 0).text = "A"
+    table.cell(0, 1).text = "B"
+    table.cell(1, 0).text = "C"
+    table.cell(1, 1).text = "D"
+    doc.save(src)
+
+    ast = parse_docx(src)
+    table_ast = next(b for b in ast["document"]["body"] if b["type"] == "Table")
+    assert table_ast.get("style") == "TableGrid", (
+        f"Expected style 'TableGrid', got {table_ast.get('style')!r}"
+    )
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    assert rebuilt.tables[0].style.name == "Table Grid"
+
+
+def test_roundtrip_inline_image_preserved(tmp_path: Path):
+    """Inline images embedded in paragraphs must survive a parse → render
+    round-trip; the rendered document must contain exactly one inline shape."""
+    src = tmp_path / "image.docx"
+    out = tmp_path / "image_out.docx"
+
+    doc = Document()
+    para = doc.add_paragraph()
+    run = para.add_run()
+    run.add_picture(io.BytesIO(_PNG_1X1), width=Inches(1), height=Inches(1))
+    doc.save(src)
+
+    ast = parse_docx(src)
+    para_ast = ast["document"]["body"][0]
+    image_nodes = [c for c in para_ast["content"] if c.get("type") == "InlineImage"]
+    assert len(image_nodes) == 1, "Parser must produce exactly one InlineImage node"
+    node = image_nodes[0]
+    assert "data" in node and node["data"]
+    assert node.get("width", 0) > 0
+    assert node.get("height", 0) > 0
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    assert len(rebuilt.inline_shapes) == 1, (
+        "Rendered document must contain exactly one inline shape"
+    )
