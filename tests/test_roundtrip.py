@@ -282,3 +282,47 @@ def test_rendered_compat_mode_is_15(tmp_path: Path):
             assert cs.get(qn("w:val")) == "15"
             return
     raise AssertionError("compatibilityMode setting not found")
+
+
+def test_roundtrip_heading_theme_color_not_reapplied(tmp_path: Path):
+    """Round-tripping a document whose heading styles use a theme color must
+    NOT re-apply that color as an explicit run-level override.  The default
+    python-docx template defines headings with blue theme colours; after a
+    round-trip the heading runs should carry no explicit ``<w:color>`` so
+    that the cleaned-up style (which has no colour) determines the text
+    colour (black / auto).
+    """
+    src = tmp_path / "theme-heading.docx"
+    out = tmp_path / "theme-heading-out.docx"
+
+    doc = Document()
+    h1 = doc.add_paragraph("Title Level 1")
+    h1.style = "Heading 1"
+    h2 = doc.add_paragraph("Title Level 2")
+    h2.style = "Heading 2"
+    doc.save(src)
+
+    ast = parse_docx(src)
+
+    # The parser must NOT capture the template theme colour in default_run
+    for block in ast["document"]["body"]:
+        if block.get("style") in ("Heading1", "Heading2"):
+            assert "color" not in block.get("default_run", {}), (
+                f"default_run for {block['style']} should not contain a "
+                f"theme-derived color, got {block.get('default_run')}"
+            )
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    for para in rebuilt.paragraphs:
+        if para.style.name in ("Heading 1", "Heading 2"):
+            for run in para.runs:
+                rPr = run._element.find(qn("w:rPr"))
+                if rPr is not None:
+                    color_el = rPr.find(qn("w:color"))
+                    assert color_el is None, (
+                        f"Run in '{para.style.name}' should not have an "
+                        f"explicit <w:color>, but found val="
+                        f"{color_el.get(qn('w:val')) if color_el is not None else None}"
+                    )
