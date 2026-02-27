@@ -218,7 +218,7 @@ def test_roundtrip_style_defaults_with_run_overrides(tmp_path: Path):
 
 def test_rendered_headings_have_no_blue_color(tmp_path: Path):
     """Heading styles in rendered documents must not carry the blue theme
-    colour from the default python-docx template."""
+    color from the default python-docx template."""
     out = tmp_path / "heading-color.docx"
     ast = {
         "schema_version": "1.0",

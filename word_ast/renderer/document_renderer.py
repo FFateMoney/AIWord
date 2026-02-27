@@ -19,9 +19,9 @@ def _remove_heading_colors(doc):
     """Remove the blue theme color from built-in heading styles.
 
     The default python-docx template defines heading styles with blue accent
-    colours.  Chinese Word documents normally use black headings, so we strip
+    colors.  Chinese Word documents normally use black headings, so we strip
     the ``<w:color>`` element from every heading style (both paragraph and
-    linked character styles) to let them inherit the default text colour.
+    linked character styles) to let them inherit the default text color.
     """
     styles_element = doc.styles.element
     for style_el in styles_element.iterchildren(qn("w:style")):
