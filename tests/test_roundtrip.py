@@ -1,8 +1,10 @@
+import zipfile
 from pathlib import Path
 
 from docx import Document
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
+from lxml import etree
 
 from word_ast import parse_docx, render_ast
 
@@ -216,9 +218,26 @@ def test_roundtrip_style_defaults_with_run_overrides(tmp_path: Path):
     assert runs[2].font.size.pt == 24
 
 
+def _assert_no_heading_colors_in_styles(styles_element):
+    """Assert no heading style in *styles_element* has a ``<w:color>``."""
+    for style_el in styles_element.iterchildren(qn("w:style")):
+        name_el = style_el.find(qn("w:name"))
+        if name_el is None:
+            continue
+        name_val = name_el.get(qn("w:val"), "")
+        if "heading" not in name_val.lower():
+            continue
+        rPr = style_el.find(qn("w:rPr"))
+        if rPr is None:
+            continue
+        color = rPr.find(qn("w:color"))
+        assert color is None, f"Style '{name_val}' should not have a <w:color> element"
+
+
 def test_rendered_headings_have_no_blue_color(tmp_path: Path):
     """Heading styles in rendered documents must not carry the blue theme
-    color from the default python-docx template."""
+    color from the default python-docx template.  Both ``styles.xml`` and
+    ``stylesWithEffects.xml`` are checked."""
     out = tmp_path / "heading-color.docx"
     ast = {
         "schema_version": "1.0",
@@ -236,20 +255,16 @@ def test_rendered_headings_have_no_blue_color(tmp_path: Path):
     }
     render_ast(ast, out)
 
+    # Check styles.xml via python-docx API
     rebuilt = Document(out)
-    styles_el = rebuilt.styles.element
-    for style_el in styles_el.iterchildren(qn("w:style")):
-        name_el = style_el.find(qn("w:name"))
-        if name_el is None:
-            continue
-        name_val = name_el.get(qn("w:val"), "")
-        if "heading" not in name_val.lower():
-            continue
-        rPr = style_el.find(qn("w:rPr"))
-        if rPr is None:
-            continue
-        color = rPr.find(qn("w:color"))
-        assert color is None, f"Style '{name_val}' should not have a <w:color> element"
+    _assert_no_heading_colors_in_styles(rebuilt.styles.element)
+
+    # Check stylesWithEffects.xml via raw ZIP
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    with zipfile.ZipFile(out) as zf:
+        if "word/stylesWithEffects.xml" in zf.namelist():
+            swe_root = etree.fromstring(zf.read("word/stylesWithEffects.xml"))
+            _assert_no_heading_colors_in_styles(swe_root)
 
 
 def test_rendered_compat_mode_is_15(tmp_path: Path):
