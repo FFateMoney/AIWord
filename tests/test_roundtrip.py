@@ -405,3 +405,72 @@ def test_roundtrip_inline_image_preserved(tmp_path: Path):
     assert len(rebuilt.inline_shapes) == 1, (
         "Rendered document must contain exactly one inline shape"
     )
+
+
+def test_table_style_resolved_by_name_when_id_differs(tmp_path: Path):
+    """When the AST table style ID does not exist in the python-docx template
+    (e.g. 'a8' in Chinese Word documents mapping to 'Table Grid'), the renderer
+    must fall back to looking up the style by name via the styles dict."""
+    out = tmp_path / "table_name.docx"
+
+    ast = {
+        "schema_version": "1.0",
+        "document": {
+            "meta": {},
+            "styles": {
+                "a8": {"style_id": "a8", "name": "Table Grid", "type": "table", "based_on": None},
+            },
+            "body": [
+                {
+                    "id": "t0", "type": "Table", "style": "a8",
+                    "rows": [
+                        {"cells": [
+                            {"id": "t0.r0c0", "content": [
+                                {"id": "t0.r0c0.p0", "type": "Paragraph", "style": None,
+                                 "content": [{"type": "Text", "text": "cell"}]}
+                            ], "col_span": 1, "row_span": 1},
+                        ]},
+                    ],
+                },
+            ],
+            "passthrough": {},
+        },
+    }
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    assert rebuilt.tables[0].style.name == "Table Grid"
+
+
+def test_roundtrip_table_cell_font_preserved(tmp_path: Path):
+    """Table cell text with explicit East Asian font must preserve the font
+    through a parse → render round-trip so that CJK characters render correctly."""
+    src = tmp_path / "cell_font.docx"
+    out = tmp_path / "cell_font_out.docx"
+
+    doc = Document()
+    table = doc.add_table(rows=1, cols=1)
+    table.style = "Table Grid"
+    cell = table.cell(0, 0)
+    # Clear default paragraph and add one with styled run
+    p = cell.paragraphs[0]
+    run = p.add_run("发展")
+    run.font.name = "宋体"
+    run.font.size = Pt(12)
+    rPr = run._element.get_or_add_rPr()
+    rFonts = rPr.find(qn('w:rFonts'))
+    rFonts.set(qn('w:eastAsia'), '宋体')
+    doc.save(src)
+
+    ast = parse_docx(src)
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    runs = rebuilt.tables[0].cell(0, 0).paragraphs[0].runs
+    text_runs = [r for r in runs if r.text]
+    assert len(text_runs) >= 1
+    r = text_runs[0]
+    assert r.text == "发展"
+    assert r.font.name == "宋体"
+    assert _get_east_asia_font(r) == "宋体"

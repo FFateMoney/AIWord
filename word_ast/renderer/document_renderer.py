@@ -118,6 +118,6 @@ def render_ast(ast_or_path: dict | str | Path, output_path: str | Path):
         if t == "Paragraph":
             render_paragraph(doc, block, styles)
         elif t == "Table":
-            render_table(doc, block)
+            render_table(doc, block, styles)
 
     doc.save(str(output_path))

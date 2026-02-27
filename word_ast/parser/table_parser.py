@@ -1,6 +1,8 @@
 from docx.table import Table
 from docx.table import _Cell
 
+from word_ast.parser.paragraph_parser import parse_paragraph_block
+
 
 def _grid_span(tc) -> int:
     tc_pr = tc.tcPr
@@ -50,11 +52,14 @@ def parse_table_block(table: Table, block_id: str) -> dict:
                     row_span += 1
 
             cell = _Cell(tc, table)
-            cell_text = "\n".join(p.text for p in cell.paragraphs)
+            cell_paragraphs = []
+            for p_idx, p in enumerate(cell.paragraphs):
+                p_block = parse_paragraph_block(p, f"{block_id}.r{row_idx}c{col_cursor}.p{p_idx}")
+                cell_paragraphs.append(p_block)
             cells.append(
                 {
                     "id": f"{block_id}.r{row_idx}c{col_cursor}",
-                    "content": [{"id": f"{block_id}.r{row_idx}c{col_cursor}.p0", "type": "Paragraph", "style": "Normal", "content": [{"type": "Text", "text": cell_text}]}],
+                    "content": cell_paragraphs,
                     "col_span": col_span,
                     "row_span": row_span,
                 }
