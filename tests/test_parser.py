@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from docx import Document
+from docx.shared import Pt, RGBColor
 
 from word_ast.parser.document_parser import parse_docx
 
@@ -55,3 +56,38 @@ def test_parse_merged_table_spans(tmp_path: Path):
     assert merged_v["row_span"] == 2
 
     assert len(table_ast["rows"][2]["cells"]) == 2
+
+
+def test_parse_merges_consecutive_runs_with_same_style(tmp_path: Path):
+    """Consecutive runs with identical formatting should be merged into one Text node."""
+    path = tmp_path / "fragmented.docx"
+    doc = Document()
+    p = doc.add_paragraph()
+    # Three runs with the same formatting — simulates DOCX fragmentation
+    for text in ["核心网", "来管理5G基站。", "核心网"]:
+        r = p.add_run(text)
+        r.font.color.rgb = RGBColor(0x1F, 0x1F, 0x1F)
+        r.font.size = Pt(12)
+        r.font.name = "宋体"
+    doc.save(path)
+
+    ast = parse_docx(path)
+    content = ast["document"]["body"][0]["content"]
+    assert len(content) == 1
+    assert content[0]["text"] == "核心网来管理5G基站。核心网"
+
+
+def test_parse_does_not_merge_runs_with_different_styles(tmp_path: Path):
+    """Runs with different formatting must stay separate after parsing."""
+    path = tmp_path / "diff.docx"
+    doc = Document()
+    p = doc.add_paragraph()
+    r1 = p.add_run("red ")
+    r1.font.color.rgb = RGBColor(255, 0, 0)
+    r2 = p.add_run("blue")
+    r2.font.color.rgb = RGBColor(0, 0, 255)
+    doc.save(path)
+
+    ast = parse_docx(path)
+    content = ast["document"]["body"][0]["content"]
+    assert len(content) == 2
