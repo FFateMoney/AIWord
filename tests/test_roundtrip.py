@@ -214,3 +214,71 @@ def test_roundtrip_style_defaults_with_run_overrides(tmp_path: Path):
     assert runs[2].font.name == "Times New Roman"
     assert _get_east_asia_font(runs[2]) == "黑体"
     assert runs[2].font.size.pt == 24
+
+
+def test_rendered_headings_have_no_blue_color(tmp_path: Path):
+    """Heading styles in rendered documents must not carry the blue theme
+    color from the default python-docx template."""
+    out = tmp_path / "heading-color.docx"
+    ast = {
+        "schema_version": "1.0",
+        "document": {
+            "meta": {},
+            "styles": {
+                "Heading1": {"style_id": "Heading1", "name": "Heading 1", "type": "paragraph", "based_on": "Normal"},
+            },
+            "body": [
+                {"id": "p0", "type": "Paragraph", "style": "Heading1",
+                 "content": [{"type": "Text", "text": "Title"}]},
+            ],
+            "passthrough": {},
+        },
+    }
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    styles_el = rebuilt.styles.element
+    for style_el in styles_el.iterchildren(qn("w:style")):
+        name_el = style_el.find(qn("w:name"))
+        if name_el is None:
+            continue
+        name_val = name_el.get(qn("w:val"), "")
+        if "heading" not in name_val.lower():
+            continue
+        rPr = style_el.find(qn("w:rPr"))
+        if rPr is None:
+            continue
+        color = rPr.find(qn("w:color"))
+        assert color is None, f"Style '{name_val}' should not have a <w:color> element"
+
+
+def test_rendered_compat_mode_is_15(tmp_path: Path):
+    """Rendered documents should use compatibilityMode 15 (Word 2013+)
+    so that modern Word does not enter compatibility mode."""
+    out = tmp_path / "compat.docx"
+    ast = {
+        "schema_version": "1.0",
+        "document": {
+            "meta": {},
+            "styles": {},
+            "body": [
+                {"id": "p0", "type": "Paragraph", "style": None,
+                 "content": [{"type": "Text", "text": "hello"}]},
+            ],
+            "passthrough": {},
+        },
+    }
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    settings_el = rebuilt.settings.element
+    compat = settings_el.find(qn("w:compat"))
+    assert compat is not None
+    for cs in compat.iterchildren(qn("w:compatSetting")):
+        if (
+            cs.get(qn("w:name")) == "compatibilityMode"
+            and cs.get(qn("w:uri")) == "http://schemas.microsoft.com/office/word"
+        ):
+            assert cs.get(qn("w:val")) == "15"
+            return
+    raise AssertionError("compatibilityMode setting not found")
