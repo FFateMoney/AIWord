@@ -60,6 +60,24 @@ def _font_to_overrides(font, *, skip_theme_color: bool = False) -> dict:
     return overrides
 
 
+def _merge_runs(content: list[dict]) -> list[dict]:
+    """Merge consecutive Text nodes that share identical overrides."""
+    if not content:
+        return content
+    merged: list[dict] = [content[0]]
+    for item in content[1:]:
+        prev = merged[-1]
+        if (
+            prev["type"] == "Text"
+            and item["type"] == "Text"
+            and prev.get("overrides") == item.get("overrides")
+        ):
+            prev["text"] += item["text"]
+        else:
+            merged.append(item)
+    return merged
+
+
 def parse_paragraph_block(paragraph: Paragraph, block_id: str) -> dict:
     content = []
     for run in paragraph.runs:
@@ -68,6 +86,7 @@ def parse_paragraph_block(paragraph: Paragraph, block_id: str) -> dict:
         if overrides:
             item["overrides"] = overrides
         content.append(item)
+    content = _merge_runs(content)
 
     default_run = _font_to_overrides(
         getattr(paragraph.style, "font", None), skip_theme_color=True
