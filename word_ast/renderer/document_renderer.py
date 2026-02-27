@@ -4,6 +4,7 @@ from pathlib import Path
 from docx import Document
 from docx.oxml.ns import qn
 from docx.shared import Twips
+from lxml import etree
 
 
 from .paragraph_renderer import render_paragraph
@@ -14,6 +15,31 @@ _HEADING_STYLE_NAMES = frozenset(
     f"heading {i}" for i in range(1, 10)
 )
 
+_HEADING_CHAR_NAMES = frozenset(
+    f"heading {i} char" for i in range(1, 10)
+)
+
+
+def _is_heading_style_name(name: str) -> bool:
+    low = name.lower()
+    return low in _HEADING_STYLE_NAMES or low in _HEADING_CHAR_NAMES
+
+
+def _strip_heading_colors_from_element(styles_element):
+    """Remove ``<w:color>`` from heading styles in a styles XML element."""
+    for style_el in styles_element.iterchildren(qn("w:style")):
+        name_el = style_el.find(qn("w:name"))
+        if name_el is None:
+            continue
+        if not _is_heading_style_name(name_el.get(qn("w:val"), "")):
+            continue
+        rPr = style_el.find(qn("w:rPr"))
+        if rPr is None:
+            continue
+        color = rPr.find(qn("w:color"))
+        if color is not None:
+            rPr.remove(color)
+
 
 def _remove_heading_colors(doc):
     """Remove the blue theme color from built-in heading styles.
@@ -22,24 +48,25 @@ def _remove_heading_colors(doc):
     colors.  Chinese Word documents normally use black headings, so we strip
     the ``<w:color>`` element from every heading style (both paragraph and
     linked character styles) to let them inherit the default text color.
+
+    Both ``styles.xml`` and ``stylesWithEffects.xml`` are cleaned because
+    some Word versions read heading colours from the latter.
     """
-    styles_element = doc.styles.element
-    for style_el in styles_element.iterchildren(qn("w:style")):
-        name_el = style_el.find(qn("w:name"))
-        if name_el is None:
-            continue
-        name_val = name_el.get(qn("w:val"), "")
-        # Match "heading 1" … "heading 9" and their linked Char styles
-        if name_val.lower() not in _HEADING_STYLE_NAMES and not any(
-            name_val.lower() == f"heading {i} char" for i in range(1, 10)
-        ):
-            continue
-        rPr = style_el.find(qn("w:rPr"))
-        if rPr is None:
-            continue
-        color = rPr.find(qn("w:color"))
-        if color is not None:
-            rPr.remove(color)
+    # 1. Clean styles.xml (exposed via python-docx API)
+    _strip_heading_colors_from_element(doc.styles.element)
+
+    # 2. Clean stylesWithEffects.xml (only accessible via the raw OPC part)
+    _STYLES_WITH_EFFECTS_REL = (
+        "http://schemas.microsoft.com/office/2007/relationships/stylesWithEffects"
+    )
+    for rel in doc.part.rels.values():
+        if rel.reltype == _STYLES_WITH_EFFECTS_REL:
+            swe_part = rel.target_part
+            swe_tree = etree.fromstring(swe_part.blob)
+            _strip_heading_colors_from_element(swe_tree)
+            swe_part._blob = etree.tostring(swe_tree, xml_declaration=True,
+                                            encoding="UTF-8", standalone=True)
+            break
 
 
 def _set_compat_mode_15(doc):

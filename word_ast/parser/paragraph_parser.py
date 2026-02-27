@@ -1,11 +1,14 @@
+from docx.enum.dml import MSO_COLOR_TYPE
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 
 from word_ast.utils.units import pt_to_half_points
 
 
-def _color_to_hex(color) -> str | None:
+def _color_to_hex(color, *, skip_theme: bool = False) -> str | None:
     if color is None:
+        return None
+    if skip_theme and getattr(color, "type", None) == MSO_COLOR_TYPE.THEME:
         return None
     rgb = color.rgb
     if rgb is None:
@@ -27,7 +30,7 @@ def _read_east_asia_font(font) -> str | None:
         return None
 
 
-def _font_to_overrides(font) -> dict:
+def _font_to_overrides(font, *, skip_theme_color: bool = False) -> dict:
     overrides = {}
     if font is None:
         return overrides
@@ -39,7 +42,7 @@ def _font_to_overrides(font) -> dict:
     if font.underline is not None:
         overrides["underline"] = bool(font.underline)
 
-    color = _color_to_hex(font.color)
+    color = _color_to_hex(font.color, skip_theme=skip_theme_color)
     if color:
         overrides["color"] = color
 
@@ -66,7 +69,9 @@ def parse_paragraph_block(paragraph: Paragraph, block_id: str) -> dict:
             item["overrides"] = overrides
         content.append(item)
 
-    default_run = _font_to_overrides(getattr(paragraph.style, "font", None))
+    default_run = _font_to_overrides(
+        getattr(paragraph.style, "font", None), skip_theme_color=True
+    )
 
     block = {
         "id": block_id,
