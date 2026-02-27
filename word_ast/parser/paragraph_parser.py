@@ -1,8 +1,16 @@
+import base64
+
 from docx.enum.dml import MSO_COLOR_TYPE
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 
 from word_ast.utils.units import pt_to_half_points
+
+_WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+_A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+# 1 EMU = 1/914400 inch; 1 twip = 1/1440 inch → 1 twip = 914400/1440 = 635 EMU
+_EMU_PER_TWIP = 635
 
 
 def _color_to_hex(color, *, skip_theme: bool = False) -> str | None:
@@ -78,9 +86,53 @@ def _merge_runs(content: list[dict]) -> list[dict]:
     return merged
 
 
+def _parse_inline_image(run) -> dict | None:
+    """Return an InlineImage node if *run* contains a ``<w:drawing>`` with an
+    inline image, otherwise return ``None``."""
+    r_el = run._element
+    drawing = r_el.find(qn("w:drawing"))
+    if drawing is None:
+        return None
+    inline = drawing.find(f"{{{_WP_NS}}}inline")
+    if inline is None:
+        return None
+    ext = inline.find(f"{{{_WP_NS}}}extent")
+    if ext is None:
+        return None
+    try:
+        cx = int(ext.get("cx", 0))
+        cy = int(ext.get("cy", 0))
+    except (TypeError, ValueError):
+        return None
+    blip = inline.find(f".//{{{_A_NS}}}blip")
+    if blip is None:
+        return None
+    r_id = blip.get(f"{{{_R_NS}}}embed")
+    if not r_id:
+        return None
+    try:
+        part = run.part
+        image_part = part.related_parts[r_id]
+        image_data = base64.b64encode(image_part.blob).decode("ascii")
+        content_type = image_part.content_type
+    except (KeyError, AttributeError):
+        return None
+    return {
+        "type": "InlineImage",
+        "data": image_data,
+        "content_type": content_type,
+        "width": cx // _EMU_PER_TWIP,
+        "height": cy // _EMU_PER_TWIP,
+    }
+
+
 def parse_paragraph_block(paragraph: Paragraph, block_id: str) -> dict:
     content = []
     for run in paragraph.runs:
+        image_node = _parse_inline_image(run)
+        if image_node is not None:
+            content.append(image_node)
+            continue
         item: dict = {"type": "Text", "text": run.text}
         overrides = _font_to_overrides(run.font)
         if overrides:

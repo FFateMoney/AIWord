@@ -26,6 +26,7 @@ def _tc_at_column(tr, col_idx: int):
 
 
 def parse_table_block(table: Table, block_id: str) -> dict:
+    style_id = table.style.style_id if table.style else None
     rows = []
     xml_rows = table._tbl.tr_lst
     for row_idx, tr in enumerate(xml_rows):
@@ -60,4 +61,4 @@ def parse_table_block(table: Table, block_id: str) -> dict:
             )
             col_cursor += col_span
         rows.append({"cells": cells})
-    return {"id": block_id, "type": "Table", "rows": rows}
+    return {"id": block_id, "type": "Table", "style": style_id, "rows": rows}

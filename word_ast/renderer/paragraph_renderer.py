@@ -1,6 +1,9 @@
+import base64
+import io
+
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import RGBColor, Pt
+from docx.shared import RGBColor, Pt, Twips
 
 from word_ast.utils.units import half_points_to_pt
 
@@ -31,6 +34,20 @@ def render_paragraph(doc, block: dict, styles: dict | None = None):
 
     paragraph_defaults = block.get("default_run", {})
     for piece in block.get("content", []):
+        if piece.get("type") == "InlineImage":
+            try:
+                image_bytes = base64.b64decode(piece["data"])
+                run = paragraph.add_run()
+                width = piece.get("width")
+                height = piece.get("height")
+                run.add_picture(
+                    io.BytesIO(image_bytes),
+                    width=Twips(width) if width else None,
+                    height=Twips(height) if height else None,
+                )
+            except (KeyError, ValueError, OSError):
+                pass
+            continue
         if piece.get("type") != "Text":
             continue
         run = paragraph.add_run(piece.get("text", ""))
