@@ -1,3 +1,5 @@
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import RGBColor, Pt
 
 from word_ast.utils.units import half_points_to_pt
@@ -47,6 +49,12 @@ def render_paragraph(doc, block: dict, styles: dict | None = None):
             hex_color = overrides["color"][1:]
             if len(hex_color) == 6:
                 run.font.color.rgb = RGBColor.from_string(hex_color)
-        font = overrides.get("font")
-        if isinstance(font, dict) and font.get("ascii"):
-            run.font.name = font["ascii"]
+        if overrides.get("font_ascii"):
+            run.font.name = overrides["font_ascii"]
+        if overrides.get("font_east_asia"):
+            rPr = run._element.get_or_add_rPr()
+            rFonts = rPr.find(qn('w:rFonts'))
+            if rFonts is None:
+                rFonts = OxmlElement('w:rFonts')
+                rPr.append(rFonts)
+            rFonts.set(qn('w:eastAsia'), overrides["font_east_asia"])

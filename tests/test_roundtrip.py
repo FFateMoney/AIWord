@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from docx import Document
+from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 
 from word_ast import parse_docx, render_ast
@@ -82,3 +83,134 @@ def test_roundtrip_preserves_paragraph_style_font_defaults(tmp_path: Path):
     assert run.font.size.pt == 24
     assert str(run.font.color.rgb) == "000000"
     assert run.bold is True
+
+
+def _get_east_asia_font(run) -> str | None:
+    """Helper to read the East Asian font name from a run's XML."""
+    rPr = run._element.find(qn('w:rPr'))
+    if rPr is None:
+        return None
+    rFonts = rPr.find(qn('w:rFonts'))
+    if rFonts is None:
+        return None
+    return rFonts.get(qn('w:eastAsia'))
+
+
+def test_roundtrip_preserves_east_asian_font(tmp_path: Path):
+    """East Asian font (w:eastAsia) must survive a parse → render round-trip."""
+    src = tmp_path / "ea.docx"
+    out = tmp_path / "ea-out.docx"
+
+    doc = Document()
+    p = doc.add_paragraph()
+    run = p.add_run("你好世界")
+    run.font.name = "Calibri"
+    run.font.size = Pt(14)
+    # Set East Asian font via XML
+    rPr = run._element.get_or_add_rPr()
+    rFonts = rPr.find(qn('w:rFonts'))
+    rFonts.set(qn('w:eastAsia'), '宋体')
+    doc.save(src)
+
+    ast = parse_docx(src)
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    r = rebuilt.paragraphs[0].runs[0]
+    assert r.font.name == "Calibri"
+    assert _get_east_asia_font(r) == "宋体"
+    assert r.font.size.pt == 14
+
+
+def test_roundtrip_multi_run_different_fonts(tmp_path: Path):
+    """Multiple runs with different fonts/colors/sizes must not bleed into each other."""
+    src = tmp_path / "multi.docx"
+    out = tmp_path / "multi-out.docx"
+
+    doc = Document()
+    p = doc.add_paragraph()
+
+    r1 = p.add_run("Red ")
+    r1.font.color.rgb = RGBColor(255, 0, 0)
+    r1.font.size = Pt(14)
+    r1.font.name = "Arial"
+
+    r2 = p.add_run("Blue")
+    r2.font.color.rgb = RGBColor(0, 0, 255)
+    r2.font.size = Pt(10)
+    r2.font.name = "Times New Roman"
+
+    doc.save(src)
+
+    ast = parse_docx(src)
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    runs = rebuilt.paragraphs[0].runs
+    assert len(runs) == 2
+
+    assert runs[0].font.name == "Arial"
+    assert runs[0].font.size.pt == 14
+    assert str(runs[0].font.color.rgb) == "FF0000"
+
+    assert runs[1].font.name == "Times New Roman"
+    assert runs[1].font.size.pt == 10
+    assert str(runs[1].font.color.rgb) == "0000FF"
+
+
+def test_roundtrip_style_defaults_with_run_overrides(tmp_path: Path):
+    """When a style sets defaults and a run overrides only some properties,
+    the non-overridden properties must come from the style defaults."""
+    src = tmp_path / "override.docx"
+    out = tmp_path / "override-out.docx"
+
+    doc = Document()
+    heading = doc.styles["Heading 1"]
+    heading.font.name = "Arial"
+    heading.font.size = Pt(24)
+    heading.font.color.rgb = RGBColor(0, 0, 128)
+    heading.font.bold = True
+    # Set East Asian font on style
+    rPr = heading.font._element.rPr
+    rFonts = rPr.find(qn('w:rFonts'))
+    rFonts.set(qn('w:eastAsia'), '黑体')
+
+    p = doc.add_paragraph()
+    p.style = heading
+
+    # Run 1: no overrides (inherit all from style)
+    p.add_run("Title ")
+
+    # Run 2: override only color
+    r2 = p.add_run("RED")
+    r2.font.color.rgb = RGBColor(255, 0, 0)
+
+    # Run 3: override only ASCII font (east-asian font must come from style default)
+    r3 = p.add_run(" Serif")
+    r3.font.name = "Times New Roman"
+
+    doc.save(src)
+
+    ast = parse_docx(src)
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    runs = rebuilt.paragraphs[0].runs
+
+    # Run 1: all from style defaults
+    assert runs[0].font.name == "Arial"
+    assert _get_east_asia_font(runs[0]) == "黑体"
+    assert runs[0].bold is True
+    assert runs[0].font.size.pt == 24
+    assert str(runs[0].font.color.rgb) == "000080"
+
+    # Run 2: color overridden, rest from defaults
+    assert runs[1].font.name == "Arial"
+    assert _get_east_asia_font(runs[1]) == "黑体"
+    assert str(runs[1].font.color.rgb) == "FF0000"
+    assert runs[1].font.size.pt == 24
+
+    # Run 3: ASCII font overridden, east-asian still from defaults
+    assert runs[2].font.name == "Times New Roman"
+    assert _get_east_asia_font(runs[2]) == "黑体"
+    assert runs[2].font.size.pt == 24
