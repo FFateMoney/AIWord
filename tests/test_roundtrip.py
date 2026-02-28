@@ -743,3 +743,221 @@ def test_roundtrip_preserves_custom_xml_text(tmp_path: Path):
 
     rebuilt = Document(out)
     assert "Custom XML Text" in rebuilt.paragraphs[0].text
+
+
+def _build_toc_sdt(title_text="目录",
+                   instruction='TOC \\o "1-3" \\h \\z \\u'):
+    """Helper: build a block-level ``<w:sdt>`` representing a Word TOC."""
+    sdt = OxmlElement("w:sdt")
+
+    sdtPr = OxmlElement("w:sdtPr")
+    docPartObj = OxmlElement("w:docPartObj")
+    gallery = OxmlElement("w:docPartGallery")
+    gallery.set(qn("w:val"), "Table of Contents")
+    docPartObj.append(gallery)
+    unique = OxmlElement("w:docPartUnique")
+    docPartObj.append(unique)
+    sdtPr.append(docPartObj)
+    sdt.append(sdtPr)
+
+    sdtContent = OxmlElement("w:sdtContent")
+
+    # Title paragraph
+    if title_text:
+        title_p = OxmlElement("w:p")
+        title_r = OxmlElement("w:r")
+        title_t = OxmlElement("w:t")
+        title_t.text = title_text
+        title_r.append(title_t)
+        title_p.append(title_r)
+        sdtContent.append(title_p)
+
+    # Paragraph with field begin + instruction + separate
+    field_p = OxmlElement("w:p")
+    r1 = OxmlElement("w:r")
+    fc1 = OxmlElement("w:fldChar")
+    fc1.set(qn("w:fldCharType"), "begin")
+    r1.append(fc1)
+    field_p.append(r1)
+
+    r2 = OxmlElement("w:r")
+    it = OxmlElement("w:instrText")
+    it.set(qn("xml:space"), "preserve")
+    it.text = f" {instruction} "
+    r2.append(it)
+    field_p.append(r2)
+
+    r3 = OxmlElement("w:r")
+    fc2 = OxmlElement("w:fldChar")
+    fc2.set(qn("w:fldCharType"), "separate")
+    r3.append(fc2)
+    field_p.append(r3)
+    sdtContent.append(field_p)
+
+    # Dummy TOC entry (generated content)
+    entry_p = OxmlElement("w:p")
+    entry_r = OxmlElement("w:r")
+    entry_t = OxmlElement("w:t")
+    entry_t.text = "Chapter 1.....1"
+    entry_r.append(entry_t)
+    entry_p.append(entry_r)
+    sdtContent.append(entry_p)
+
+    # Field end
+    end_p = OxmlElement("w:p")
+    r4 = OxmlElement("w:r")
+    fc3 = OxmlElement("w:fldChar")
+    fc3.set(qn("w:fldCharType"), "end")
+    r4.append(fc3)
+    end_p.append(r4)
+    sdtContent.append(end_p)
+
+    sdt.append(sdtContent)
+    return sdt
+
+
+def test_roundtrip_toc_produces_native_field(tmp_path: Path):
+    """A document with a TOC SDT must round-trip into a native Word TOC
+    field (fldChar begin/separate/end + instrText) wrapped in an SDT with
+    ``docPartGallery = 'Table of Contents'``, not as fake formatted paragraphs."""
+    src = tmp_path / "toc.docx"
+    out = tmp_path / "toc-out.docx"
+
+    doc = Document()
+    doc.add_paragraph("Before TOC")
+
+    # Insert TOC SDT before sectPr
+    sdt = _build_toc_sdt()
+    sectPr = doc.element.body.find(qn("w:sectPr"))
+    if sectPr is not None:
+        sectPr.addprevious(sdt)
+    else:
+        doc.element.body.append(sdt)
+
+    doc.add_paragraph("Chapter 1", style="Heading 1")
+    doc.add_paragraph("Body text")
+    doc.save(src)
+
+    ast = parse_docx(src)
+
+    # Parser must produce a TOC node (not plain paragraphs)
+    toc_blocks = [b for b in ast["document"]["body"] if b["type"] == "TOC"]
+    assert len(toc_blocks) == 1, (
+        f"Expected exactly one TOC block, got {len(toc_blocks)}"
+    )
+    toc = toc_blocks[0]
+    assert "TOC" in toc["instruction"]
+    assert toc["title"]["content"][0]["text"] == "目录"
+
+    render_ast(ast, out)
+
+    # Verify the rendered document has a native TOC SDT with field codes
+    rebuilt = Document(out)
+    body = rebuilt.element.body
+    sdt_els = [c for c in body if c.tag == qn("w:sdt")]
+    assert len(sdt_els) == 1, "Rendered document must contain exactly one SDT"
+
+    sdt_el = sdt_els[0]
+    # Check gallery
+    gallery = sdt_el.find(f".//{qn('w:docPartGallery')}")
+    assert gallery is not None
+    assert gallery.get(qn("w:val")) == "Table of Contents"
+
+    # Check field codes
+    fld_types = [
+        fc.get(qn("w:fldCharType"))
+        for fc in sdt_el.iter(qn("w:fldChar"))
+    ]
+    assert "begin" in fld_types, "TOC must have fldChar begin"
+    assert "separate" in fld_types, "TOC must have fldChar separate"
+    assert "end" in fld_types, "TOC must have fldChar end"
+
+    # Check instruction
+    instr_texts = [it.text for it in sdt_el.iter(qn("w:instrText")) if it.text]
+    instr = "".join(instr_texts)
+    assert "TOC" in instr, f"instrText must contain TOC, got {instr!r}"
+
+    # Check dirty flag for auto-update
+    begin_fc = next(
+        fc for fc in sdt_el.iter(qn("w:fldChar"))
+        if fc.get(qn("w:fldCharType")) == "begin"
+    )
+    assert begin_fc.get(qn("w:dirty")) == "true", (
+        "TOC field begin must be marked dirty for auto-update"
+    )
+
+
+def test_roundtrip_toc_without_title(tmp_path: Path):
+    """A TOC SDT that has no title paragraph must still round-trip correctly."""
+    src = tmp_path / "toc_no_title.docx"
+    out = tmp_path / "toc_no_title-out.docx"
+
+    doc = Document()
+    sdt = _build_toc_sdt(title_text=None)
+    sectPr = doc.element.body.find(qn("w:sectPr"))
+    if sectPr is not None:
+        sectPr.addprevious(sdt)
+    else:
+        doc.element.body.append(sdt)
+
+    doc.add_paragraph("Chapter 1", style="Heading 1")
+    doc.save(src)
+
+    ast = parse_docx(src)
+    toc_blocks = [b for b in ast["document"]["body"] if b["type"] == "TOC"]
+    assert len(toc_blocks) == 1
+    assert "title" not in toc_blocks[0]
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    body = rebuilt.element.body
+    sdt_els = [c for c in body if c.tag == qn("w:sdt")]
+    assert len(sdt_els) == 1
+    fld_types = [
+        fc.get(qn("w:fldCharType"))
+        for fc in sdt_els[0].iter(qn("w:fldChar"))
+    ]
+    assert "begin" in fld_types
+    assert "end" in fld_types
+
+
+def test_roundtrip_non_toc_sdt_still_unwrapped(tmp_path: Path):
+    """Block-level SDTs that are NOT a TOC must still be unwrapped into
+    individual paragraphs (regression guard for existing behaviour)."""
+    src = tmp_path / "sdt_plain.docx"
+    out = tmp_path / "sdt_plain-out.docx"
+
+    doc = Document()
+    doc.add_paragraph("Before SDT")
+
+    sdt = OxmlElement("w:sdt")
+    sdt_content = OxmlElement("w:sdtContent")
+    p_el = OxmlElement("w:p")
+    r_el = OxmlElement("w:r")
+    t_el = OxmlElement("w:t")
+    t_el.text = "Inside Plain SDT"
+    r_el.append(t_el)
+    p_el.append(r_el)
+    sdt_content.append(p_el)
+    sdt.append(sdt_content)
+    doc.element.body.append(sdt)
+
+    doc.add_paragraph("After SDT")
+    doc.save(src)
+
+    ast = parse_docx(src)
+    toc_blocks = [b for b in ast["document"]["body"] if b["type"] == "TOC"]
+    assert len(toc_blocks) == 0, "Plain SDT must not be treated as TOC"
+
+    all_text = " ".join(
+        c.get("text", "")
+        for block in ast["document"]["body"]
+        for c in block.get("content", [])
+    )
+    assert "Inside Plain SDT" in all_text
+
+    render_ast(ast, out)
+    rebuilt = Document(out)
+    full = " ".join(p.text for p in rebuilt.paragraphs)
+    assert "Inside Plain SDT" in full
