@@ -22,7 +22,7 @@ def _apply_raw_rPr(run, raw_rPr: str) -> None:
         new_rPr = parse_xml(raw_rPr)
     except Exception:
         return
-    for tag in (qn("w:rStyle"),):
+    for tag in (qn("w:rStyle"), qn("w:rPrChange")):
         el = new_rPr.find(tag)
         if el is not None:
             new_rPr.remove(el)
@@ -38,7 +38,7 @@ def _apply_raw_pPr(paragraph, raw_pPr: str) -> None:
         new_pPr = parse_xml(raw_pPr)
     except Exception:
         return
-    for tag in (qn("w:pStyle"), qn("w:numPr")):
+    for tag in (qn("w:pStyle"), qn("w:numPr"), qn("w:sectPr"), qn("w:pPrChange")):
         el = new_pPr.find(tag)
         if el is not None:
             new_pPr.remove(el)
