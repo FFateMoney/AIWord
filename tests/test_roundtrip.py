@@ -1072,3 +1072,161 @@ def test_roundtrip_explicit_bold_preserved(tmp_path: Path):
     run = rebuilt.paragraphs[0].runs[0]
     assert run.text == "Bold Text"
     assert run.bold is True
+
+
+def test_rendered_pPr_has_no_sectPr(tmp_path: Path):
+    """Raw pPr must NOT carry ``<w:sectPr>`` into the rendered document.
+
+    Multi-section source documents store section properties inside the last
+    paragraph's ``<w:pPr>``.  If this sectPr is injected into the rendered
+    document, its header/footer relationship IDs point to wrong targets,
+    causing Word to report *unreadable content* and trigger recovery, which
+    strips the entire pPr and loses paragraph formatting (alignment, spacing).
+    """
+    out = tmp_path / "sect-out.docx"
+
+    # Build an AST whose raw pPr contains a sectPr with a bogus
+    # header reference — exactly what the parser produces for the
+    # last paragraph of a section in a multi-section source document.
+    raw_pPr = (
+        '<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+        '       xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<w:jc w:val="center"/>'
+        '<w:sectPr>'
+        '<w:headerReference w:type="default" r:id="rId99"/>'
+        '<w:pgSz w:w="12240" w:h="15840"/>'
+        '</w:sectPr>'
+        '</w:pPr>'
+    )
+
+    ast = {
+        "schema_version": "1.0",
+        "document": {
+            "meta": {},
+            "styles": {},
+            "body": [
+                {
+                    "id": "p0", "type": "Paragraph", "style": None,
+                    "paragraph_format": {
+                        "alignment": "center",
+                        "_raw_pPr": raw_pPr,
+                    },
+                    "content": [{"type": "Text", "text": "Section 1"}],
+                },
+                {
+                    "id": "p1", "type": "Paragraph", "style": None,
+                    "content": [{"type": "Text", "text": "Section 2"}],
+                },
+            ],
+            "passthrough": {},
+        },
+    }
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    body = rebuilt.element.body
+    # No pPr in the rendered document should contain a sectPr
+    for p_el in body.iter(qn("w:p")):
+        p_pPr = p_el.find(qn("w:pPr"))
+        if p_pPr is not None:
+            assert p_pPr.find(qn("w:sectPr")) is None, (
+                "Rendered pPr must not contain <w:sectPr>"
+            )
+
+    # Alignment must survive (not lost due to recovery)
+    assert rebuilt.paragraphs[0].paragraph_format.alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+
+def test_rendered_pPr_has_no_pPrChange(tmp_path: Path):
+    """Raw pPr must NOT carry ``<w:pPrChange>`` (track-changes data) into
+    the rendered document, as it may reference non-existent revision IDs."""
+    out = tmp_path / "pPrChange.docx"
+
+    raw_pPr = (
+        '<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:jc w:val="center"/>'
+        '<w:pPrChange w:id="1" w:author="test" w:date="2025-01-01T00:00:00Z">'
+        '<w:pPr><w:jc w:val="left"/></w:pPr>'
+        '</w:pPrChange>'
+        '</w:pPr>'
+    )
+
+    ast = {
+        "schema_version": "1.0",
+        "document": {
+            "meta": {},
+            "styles": {},
+            "body": [
+                {
+                    "id": "p0", "type": "Paragraph", "style": None,
+                    "paragraph_format": {
+                        "alignment": "center",
+                        "_raw_pPr": raw_pPr,
+                    },
+                    "content": [{"type": "Text", "text": "Center"}],
+                },
+            ],
+            "passthrough": {},
+        },
+    }
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    body = rebuilt.element.body
+    for p_el in body.iter(qn("w:p")):
+        p_pPr = p_el.find(qn("w:pPr"))
+        if p_pPr is not None:
+            assert p_pPr.find(qn("w:pPrChange")) is None, (
+                "Rendered pPr must not contain <w:pPrChange>"
+            )
+
+    # Alignment must be preserved
+    assert rebuilt.paragraphs[0].paragraph_format.alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+
+def test_rendered_rPr_has_no_rPrChange(tmp_path: Path):
+    """Raw rPr must NOT carry ``<w:rPrChange>`` (track-changes data) into
+    the rendered document."""
+    out = tmp_path / "rPrChange.docx"
+
+    raw_rPr = (
+        '<w:rPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:b/>'
+        '<w:rPrChange w:id="2" w:author="test" w:date="2025-01-01T00:00:00Z">'
+        '<w:rPr/>'
+        '</w:rPrChange>'
+        '</w:rPr>'
+    )
+
+    ast = {
+        "schema_version": "1.0",
+        "document": {
+            "meta": {},
+            "styles": {},
+            "body": [
+                {
+                    "id": "p0", "type": "Paragraph", "style": None,
+                    "content": [
+                        {"type": "Text", "text": "Bold",
+                         "overrides": {"bold": True, "_raw_rPr": raw_rPr}},
+                    ],
+                },
+            ],
+            "passthrough": {},
+        },
+    }
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    body = rebuilt.element.body
+    for r_el in body.iter(qn("w:r")):
+        rPr = r_el.find(qn("w:rPr"))
+        if rPr is not None:
+            assert rPr.find(qn("w:rPrChange")) is None, (
+                "Rendered rPr must not contain <w:rPrChange>"
+            )
+
+    assert rebuilt.paragraphs[0].runs[0].bold is True
