@@ -5,6 +5,7 @@ from pathlib import Path
 
 from docx import Document
 from docx.oxml.ns import qn
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt, RGBColor, Inches
 from lxml import etree
 
@@ -478,3 +479,66 @@ def test_roundtrip_table_cell_font_preserved(tmp_path: Path):
     assert r.text == "发展"
     assert r.font.name == "宋体"
     assert _get_east_asia_font(r) == "宋体"
+
+
+def test_roundtrip_preserves_paragraph_alignment(tmp_path: Path):
+    """Paragraph alignment (center, right, justify) must survive a
+    parse → render round-trip."""
+    src = tmp_path / "align.docx"
+    out = tmp_path / "align-out.docx"
+
+    doc = Document()
+    p_center = doc.add_paragraph("Centered")
+    p_center.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_right = doc.add_paragraph("Right")
+    p_right.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    p_justify = doc.add_paragraph("Justified")
+    p_justify.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    doc.save(src)
+
+    ast = parse_docx(src)
+    body = ast["document"]["body"]
+    assert body[0].get("paragraph_format", {}).get("alignment") == "center"
+    assert body[1].get("paragraph_format", {}).get("alignment") == "right"
+    assert body[2].get("paragraph_format", {}).get("alignment") == "justify"
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    assert rebuilt.paragraphs[0].paragraph_format.alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert rebuilt.paragraphs[1].paragraph_format.alignment == WD_ALIGN_PARAGRAPH.RIGHT
+    assert rebuilt.paragraphs[2].paragraph_format.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY
+
+
+def test_roundtrip_preserves_hyperlink_text(tmp_path: Path):
+    """Text inside ``<w:hyperlink>`` elements (used by TOC entries) must be
+    captured by the parser so it is not lost during a round-trip."""
+    src = tmp_path / "hyperlink.docx"
+    out = tmp_path / "hyperlink-out.docx"
+
+    # Build a paragraph containing a hyperlink run via raw XML manipulation
+    doc = Document()
+    p = doc.add_paragraph()
+    p_el = p._element
+
+    from docx.oxml import OxmlElement
+    hyperlink = OxmlElement("w:hyperlink")
+    run_el = OxmlElement("w:r")
+    t_el = OxmlElement("w:t")
+    t_el.text = "Linked Text"
+    run_el.append(t_el)
+    hyperlink.append(run_el)
+    p_el.append(hyperlink)
+    doc.save(src)
+
+    ast = parse_docx(src)
+    content = ast["document"]["body"][0]["content"]
+    full_text = "".join(c.get("text", "") for c in content)
+    assert "Linked Text" in full_text, (
+        f"Hyperlink text must be captured; got: {full_text!r}"
+    )
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    assert "Linked Text" in rebuilt.paragraphs[0].text

@@ -1,11 +1,19 @@
 import base64
 import io
 
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import RGBColor, Pt, Twips
 
 from word_ast.utils.units import half_points_to_pt
+
+_ALIGN_FROM_STR = {
+    "left": WD_ALIGN_PARAGRAPH.LEFT,
+    "center": WD_ALIGN_PARAGRAPH.CENTER,
+    "right": WD_ALIGN_PARAGRAPH.RIGHT,
+    "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+}
 
 
 def _apply_paragraph_style(paragraph, style_id: str | None, styles: dict | None):
@@ -28,9 +36,30 @@ def _apply_paragraph_style(paragraph, style_id: str | None, styles: dict | None)
             continue
 
 
+def _apply_paragraph_format(paragraph, fmt: dict):
+    """Apply paragraph-level formatting from the AST ``paragraph_format`` dict."""
+    if not fmt:
+        return
+    pf = paragraph.paragraph_format
+    alignment = fmt.get("alignment")
+    if alignment and alignment in _ALIGN_FROM_STR:
+        pf.alignment = _ALIGN_FROM_STR[alignment]
+    if "indent_left" in fmt:
+        pf.left_indent = Twips(fmt["indent_left"])
+    if "indent_right" in fmt:
+        pf.right_indent = Twips(fmt["indent_right"])
+    if "indent_first_line" in fmt:
+        pf.first_line_indent = Twips(fmt["indent_first_line"])
+    if "space_before" in fmt:
+        pf.space_before = Twips(fmt["space_before"])
+    if "space_after" in fmt:
+        pf.space_after = Twips(fmt["space_after"])
+
+
 def render_paragraph(doc, block: dict, styles: dict | None = None):
     paragraph = doc.add_paragraph()
     _apply_paragraph_style(paragraph, block.get("style"), styles)
+    _apply_paragraph_format(paragraph, block.get("paragraph_format", {}))
 
     paragraph_defaults = block.get("default_run", {})
     for piece in block.get("content", []):
