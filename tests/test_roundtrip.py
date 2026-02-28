@@ -542,3 +542,204 @@ def test_roundtrip_preserves_hyperlink_text(tmp_path: Path):
 
     rebuilt = Document(out)
     assert "Linked Text" in rebuilt.paragraphs[0].text
+
+
+def test_roundtrip_preserves_ins_text(tmp_path: Path):
+    """Text inside ``<w:ins>`` (track-change insertion) must not be lost."""
+    src = tmp_path / "ins.docx"
+    out = tmp_path / "ins-out.docx"
+
+    doc = Document()
+    p = doc.add_paragraph()
+    p_el = p._element
+
+    ins = OxmlElement("w:ins")
+    run_el = OxmlElement("w:r")
+    t_el = OxmlElement("w:t")
+    t_el.text = "Inserted Text"
+    run_el.append(t_el)
+    ins.append(run_el)
+    p_el.append(ins)
+    doc.save(src)
+
+    ast = parse_docx(src)
+    content = ast["document"]["body"][0]["content"]
+    full_text = "".join(c.get("text", "") for c in content)
+    assert "Inserted Text" in full_text, (
+        f"<w:ins> text must be captured; got: {full_text!r}"
+    )
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    assert "Inserted Text" in rebuilt.paragraphs[0].text
+
+
+def test_roundtrip_preserves_fld_simple_text(tmp_path: Path):
+    """Text inside ``<w:fldSimple>`` (simple field) must not be lost."""
+    src = tmp_path / "fld.docx"
+    out = tmp_path / "fld-out.docx"
+
+    doc = Document()
+    p = doc.add_paragraph()
+    p_el = p._element
+
+    fld = OxmlElement("w:fldSimple")
+    fld.set(qn("w:instr"), "PAGE")
+    run_el = OxmlElement("w:r")
+    t_el = OxmlElement("w:t")
+    t_el.text = "1"
+    run_el.append(t_el)
+    fld.append(run_el)
+    p_el.append(fld)
+    doc.save(src)
+
+    ast = parse_docx(src)
+    content = ast["document"]["body"][0]["content"]
+    full_text = "".join(c.get("text", "") for c in content)
+    assert "1" in full_text, (
+        f"<w:fldSimple> display text must be captured; got: {full_text!r}"
+    )
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    assert "1" in rebuilt.paragraphs[0].text
+
+
+def test_roundtrip_preserves_smart_tag_text(tmp_path: Path):
+    """Text inside ``<w:smartTag>`` must not be lost."""
+    src = tmp_path / "smart.docx"
+    out = tmp_path / "smart-out.docx"
+
+    doc = Document()
+    p = doc.add_paragraph()
+    p_el = p._element
+
+    smart = OxmlElement("w:smartTag")
+    run_el = OxmlElement("w:r")
+    t_el = OxmlElement("w:t")
+    t_el.text = "Smart Text"
+    run_el.append(t_el)
+    smart.append(run_el)
+    p_el.append(smart)
+    doc.save(src)
+
+    ast = parse_docx(src)
+    content = ast["document"]["body"][0]["content"]
+    full_text = "".join(c.get("text", "") for c in content)
+    assert "Smart Text" in full_text, (
+        f"<w:smartTag> text must be captured; got: {full_text!r}"
+    )
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    assert "Smart Text" in rebuilt.paragraphs[0].text
+
+
+def test_roundtrip_preserves_inline_sdt_text(tmp_path: Path):
+    """Text inside inline ``<w:sdt>`` (content control) must not be lost."""
+    src = tmp_path / "sdt_inline.docx"
+    out = tmp_path / "sdt_inline-out.docx"
+
+    doc = Document()
+    p = doc.add_paragraph()
+    p_el = p._element
+
+    sdt = OxmlElement("w:sdt")
+    sdt_content = OxmlElement("w:sdtContent")
+    run_el = OxmlElement("w:r")
+    t_el = OxmlElement("w:t")
+    t_el.text = "Content Control Text"
+    run_el.append(t_el)
+    sdt_content.append(run_el)
+    sdt.append(sdt_content)
+    p_el.append(sdt)
+    doc.save(src)
+
+    ast = parse_docx(src)
+    content = ast["document"]["body"][0]["content"]
+    full_text = "".join(c.get("text", "") for c in content)
+    assert "Content Control Text" in full_text, (
+        f"Inline <w:sdt> text must be captured; got: {full_text!r}"
+    )
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    assert "Content Control Text" in rebuilt.paragraphs[0].text
+
+
+def test_roundtrip_preserves_block_sdt_text(tmp_path: Path):
+    """Paragraphs inside block-level ``<w:sdt>`` (content control) must not
+    be lost during a round-trip."""
+    src = tmp_path / "sdt_block.docx"
+    out = tmp_path / "sdt_block-out.docx"
+
+    doc = Document()
+    # Add a normal paragraph first so the document isn't empty
+    doc.add_paragraph("Before SDT")
+
+    # Build a block-level <w:sdt> wrapping a paragraph
+    sdt = OxmlElement("w:sdt")
+    sdt_content = OxmlElement("w:sdtContent")
+    p_el = OxmlElement("w:p")
+    r_el = OxmlElement("w:r")
+    t_el = OxmlElement("w:t")
+    t_el.text = "Inside Block SDT"
+    r_el.append(t_el)
+    p_el.append(r_el)
+    sdt_content.append(p_el)
+    sdt.append(sdt_content)
+    doc.element.body.append(sdt)
+
+    doc.add_paragraph("After SDT")
+    doc.save(src)
+
+    ast = parse_docx(src)
+    all_text = " ".join(
+        c.get("text", "")
+        for block in ast["document"]["body"]
+        for c in block.get("content", [])
+    )
+    assert "Inside Block SDT" in all_text, (
+        f"Block-level <w:sdt> text must be captured; got: {all_text!r}"
+    )
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    full = " ".join(p.text for p in rebuilt.paragraphs)
+    assert "Inside Block SDT" in full
+
+
+def test_roundtrip_preserves_custom_xml_text(tmp_path: Path):
+    """Text inside ``<w:customXml>`` must not be lost."""
+    src = tmp_path / "cxml.docx"
+    out = tmp_path / "cxml-out.docx"
+
+    doc = Document()
+    p = doc.add_paragraph()
+    p_el = p._element
+
+    cxml = OxmlElement("w:customXml")
+    run_el = OxmlElement("w:r")
+    t_el = OxmlElement("w:t")
+    t_el.text = "Custom XML Text"
+    run_el.append(t_el)
+    cxml.append(run_el)
+    p_el.append(cxml)
+    doc.save(src)
+
+    ast = parse_docx(src)
+    content = ast["document"]["body"][0]["content"]
+    full_text = "".join(c.get("text", "") for c in content)
+    assert "Custom XML Text" in full_text, (
+        f"<w:customXml> text must be captured; got: {full_text!r}"
+    )
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    assert "Custom XML Text" in rebuilt.paragraphs[0].text
