@@ -155,20 +155,38 @@ def _parse_paragraph_format(paragraph: Paragraph) -> dict:
 
 def _iter_runs(paragraph: Paragraph):
     """Yield Run objects for all ``<w:r>`` elements in *paragraph*,
-    including those nested inside ``<w:hyperlink>`` elements.
+    including those nested inside wrapper elements such as ``<w:hyperlink>``,
+    ``<w:ins>``, ``<w:del>``, ``<w:smartTag>``, ``<w:fldSimple>``,
+    ``<w:sdt>``, and ``<w:customXml>``.
 
     python-docx ``paragraph.runs`` only returns direct ``<w:r>`` children,
     so we access the underlying lxml element to also reach runs wrapped in
-    ``<w:hyperlink>`` (used by TOC entries, cross-references, etc.).
+    these container elements (used by TOC entries, cross-references, track
+    changes, content controls, etc.).
     """
     _tag_r = qn("w:r")
-    _tag_hyperlink = qn("w:hyperlink")
+    # Elements that may contain <w:r> children (directly or via sdtContent)
+    _wrapper_tags = frozenset({
+        qn("w:hyperlink"),
+        qn("w:ins"),
+        qn("w:del"),
+        qn("w:smartTag"),
+        qn("w:fldSimple"),
+        qn("w:customXml"),
+    })
+    _tag_sdt = qn("w:sdt")
+    _tag_sdt_content = qn("w:sdtContent")
     for child in paragraph._element:
         if child.tag == _tag_r:
             yield Run(child, paragraph)
-        elif child.tag == _tag_hyperlink:
+        elif child.tag in _wrapper_tags:
             for r_el in child.findall(_tag_r):
                 yield Run(r_el, paragraph)
+        elif child.tag == _tag_sdt:
+            sdt_content = child.find(_tag_sdt_content)
+            if sdt_content is not None:
+                for r_el in sdt_content.findall(_tag_r):
+                    yield Run(r_el, paragraph)
 
 
 def parse_paragraph_block(paragraph: Paragraph, block_id: str) -> dict:
