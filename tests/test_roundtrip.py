@@ -847,7 +847,9 @@ def test_roundtrip_toc_produces_native_field(tmp_path: Path):
     )
     toc = toc_blocks[0]
     assert "TOC" in toc["instruction"]
-    assert toc["title"]["content"][0]["text"] == "目录"
+    title = toc.get("title")
+    assert title is not None, "TOC title must be present"
+    assert title["content"][0]["text"] == "目录"
 
     render_ast(ast, out)
 

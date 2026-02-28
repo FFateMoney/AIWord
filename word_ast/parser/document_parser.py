@@ -51,7 +51,7 @@ def _is_toc_sdt(sdt_el) -> bool:
     sdt_content = sdt_el.find(qn("w:sdtContent"))
     if sdt_content is not None:
         for instrText in sdt_content.iter(qn("w:instrText")):
-            if instrText.text and "TOC" in instrText.text.strip().upper().split():
+            if instrText.text and instrText.text.strip().upper().startswith("TOC"):
                 return True
     return False
 
