@@ -4,6 +4,7 @@ from docx.enum.dml import MSO_COLOR_TYPE
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 from docx.text.run import Run
+from lxml import etree
 
 from word_ast.utils.units import pt_to_half_points
 
@@ -65,6 +66,13 @@ def _font_to_overrides(font, *, skip_theme_color: bool = False) -> dict:
         overrides["font_ascii"] = ascii_font
     if ea_font:
         overrides["font_east_asia"] = ea_font
+
+    try:
+        rPr_el = font._element.rPr
+        if rPr_el is not None:
+            overrides["_raw_rPr"] = etree.tostring(rPr_el, encoding="unicode")
+    except (AttributeError, TypeError):
+        pass
 
     return overrides
 
@@ -150,6 +158,13 @@ def _parse_paragraph_format(paragraph: Paragraph) -> dict:
     if pf.space_after is not None:
         fmt["space_after"] = pf.space_after.twips
 
+    try:
+        pPr_el = paragraph._element.pPr
+        if pPr_el is not None:
+            fmt["_raw_pPr"] = etree.tostring(pPr_el, encoding="unicode")
+    except (AttributeError, TypeError):
+        pass
+
     return fmt
 
 
@@ -206,6 +221,7 @@ def parse_paragraph_block(paragraph: Paragraph, block_id: str) -> dict:
     default_run = _font_to_overrides(
         getattr(paragraph.style, "font", None), skip_theme_color=True
     )
+    default_run.pop("_raw_rPr", None)
 
     para_fmt = _parse_paragraph_format(paragraph)
 
