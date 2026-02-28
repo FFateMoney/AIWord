@@ -3,6 +3,7 @@ import base64
 from docx.enum.dml import MSO_COLOR_TYPE
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
+from docx.text.run import Run
 
 from word_ast.utils.units import pt_to_half_points
 
@@ -126,9 +127,53 @@ def _parse_inline_image(run) -> dict | None:
     }
 
 
+_ALIGNMENT_MAP = {0: "left", 1: "center", 2: "right", 3: "justify"}
+
+
+def _parse_paragraph_format(paragraph: Paragraph) -> dict:
+    """Extract paragraph-level formatting (alignment, indentation, spacing)."""
+    fmt: dict = {}
+    pf = paragraph.paragraph_format
+
+    if pf.alignment is not None:
+        fmt["alignment"] = _ALIGNMENT_MAP.get(int(pf.alignment), "left")
+
+    if pf.left_indent is not None:
+        fmt["indent_left"] = pf.left_indent.twips
+    if pf.right_indent is not None:
+        fmt["indent_right"] = pf.right_indent.twips
+    if pf.first_line_indent is not None:
+        fmt["indent_first_line"] = pf.first_line_indent.twips
+
+    if pf.space_before is not None:
+        fmt["space_before"] = pf.space_before.twips
+    if pf.space_after is not None:
+        fmt["space_after"] = pf.space_after.twips
+
+    return fmt
+
+
+def _iter_runs(paragraph: Paragraph):
+    """Yield Run objects for all ``<w:r>`` elements in *paragraph*,
+    including those nested inside ``<w:hyperlink>`` elements.
+
+    python-docx ``paragraph.runs`` only returns direct ``<w:r>`` children,
+    so we access the underlying lxml element to also reach runs wrapped in
+    ``<w:hyperlink>`` (used by TOC entries, cross-references, etc.).
+    """
+    _tag_r = qn("w:r")
+    _tag_hyperlink = qn("w:hyperlink")
+    for child in paragraph._element:
+        if child.tag == _tag_r:
+            yield Run(child, paragraph)
+        elif child.tag == _tag_hyperlink:
+            for r_el in child.findall(_tag_r):
+                yield Run(r_el, paragraph)
+
+
 def parse_paragraph_block(paragraph: Paragraph, block_id: str) -> dict:
     content = []
-    for run in paragraph.runs:
+    for run in _iter_runs(paragraph):
         image_node = _parse_inline_image(run)
         if image_node is not None:
             content.append(image_node)
@@ -144,12 +189,16 @@ def parse_paragraph_block(paragraph: Paragraph, block_id: str) -> dict:
         getattr(paragraph.style, "font", None), skip_theme_color=True
     )
 
+    para_fmt = _parse_paragraph_format(paragraph)
+
     block = {
         "id": block_id,
         "type": "Paragraph",
         "style": paragraph.style.style_id if paragraph.style else None,
         "content": content,
     }
+    if para_fmt:
+        block["paragraph_format"] = para_fmt
     if default_run:
         block["default_run"] = default_run
 
