@@ -10,6 +10,7 @@ from lxml import etree
 from .paragraph_renderer import render_paragraph
 from .style_renderer import render_styles
 from .table_renderer import render_table
+from .toc_renderer import render_toc
 
 _HEADING_STYLE_NAMES = frozenset(
     f"heading {i}" for i in range(1, 10)
@@ -119,5 +120,7 @@ def render_ast(ast_or_path: dict | str | Path, output_path: str | Path):
             render_paragraph(doc, block, styles)
         elif t == "Table":
             render_table(doc, block, styles)
+        elif t == "TOC":
+            render_toc(doc, block, styles)
 
     doc.save(str(output_path))
