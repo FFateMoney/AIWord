@@ -5,6 +5,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import RGBColor, Pt, Twips
+from lxml import etree
 
 from word_ast.utils.units import half_points_to_pt
 
@@ -14,6 +15,33 @@ _ALIGN_FROM_STR = {
     "right": WD_ALIGN_PARAGRAPH.RIGHT,
     "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
 }
+
+
+_SAFE_XML_PARSER = etree.XMLParser(resolve_entities=False)
+
+
+def _apply_raw_rPr(run, raw_rPr: str) -> None:
+    try:
+        new_rPr = etree.fromstring(raw_rPr, _SAFE_XML_PARSER)
+    except etree.XMLSyntaxError:
+        return
+    r_el = run._element
+    old_rPr = r_el.find(qn("w:rPr"))
+    if old_rPr is not None:
+        r_el.remove(old_rPr)
+    r_el.insert(0, new_rPr)
+
+
+def _apply_raw_pPr(paragraph, raw_pPr: str) -> None:
+    try:
+        new_pPr = etree.fromstring(raw_pPr, _SAFE_XML_PARSER)
+    except etree.XMLSyntaxError:
+        return
+    p_el = paragraph._element
+    old_pPr = p_el.find(qn("w:pPr"))
+    if old_pPr is not None:
+        p_el.remove(old_pPr)
+    p_el.insert(0, new_pPr)
 
 
 def _apply_paragraph_style(paragraph, style_id: str | None, styles: dict | None):
@@ -40,6 +68,8 @@ def _apply_paragraph_format(paragraph, fmt: dict):
     """Apply paragraph-level formatting from the AST ``paragraph_format`` dict."""
     if not fmt:
         return
+    if "_raw_pPr" in fmt:
+        _apply_raw_pPr(paragraph, fmt["_raw_pPr"])
     pf = paragraph.paragraph_format
     alignment = fmt.get("alignment")
     if alignment and alignment in _ALIGN_FROM_STR:
@@ -54,6 +84,35 @@ def _apply_paragraph_format(paragraph, fmt: dict):
         pf.space_before = Twips(fmt["space_before"])
     if "space_after" in fmt:
         pf.space_after = Twips(fmt["space_after"])
+
+
+def _apply_run_overrides(run, overrides: dict) -> None:
+    """Apply run-level formatting overrides to *run*."""
+    if "_raw_rPr" in overrides:
+        _apply_raw_rPr(run, overrides["_raw_rPr"])
+    if "bold" in overrides:
+        run.bold = overrides["bold"]
+    if "italic" in overrides:
+        run.italic = overrides["italic"]
+    if "underline" in overrides:
+        run.underline = overrides["underline"]
+    if "size" in overrides:
+        size_pt = half_points_to_pt(overrides["size"])
+        if size_pt is not None:
+            run.font.size = Pt(size_pt)
+    if "color" in overrides and overrides["color"].startswith("#"):
+        hex_color = overrides["color"][1:]
+        if len(hex_color) == 6:
+            run.font.color.rgb = RGBColor.from_string(hex_color)
+    if overrides.get("font_ascii"):
+        run.font.name = overrides["font_ascii"]
+    if overrides.get("font_east_asia"):
+        rPr = run._element.get_or_add_rPr()
+        rFonts = rPr.find(qn('w:rFonts'))
+        if rFonts is None:
+            rFonts = OxmlElement('w:rFonts')
+            rPr.append(rFonts)
+        rFonts.set(qn('w:eastAsia'), overrides["font_east_asia"])
 
 
 def render_paragraph(doc, block: dict, styles: dict | None = None):
@@ -81,26 +140,4 @@ def render_paragraph(doc, block: dict, styles: dict | None = None):
             continue
         run = paragraph.add_run(piece.get("text", ""))
         overrides = {**paragraph_defaults, **piece.get("overrides", {})}
-        if "bold" in overrides:
-            run.bold = overrides["bold"]
-        if "italic" in overrides:
-            run.italic = overrides["italic"]
-        if "underline" in overrides:
-            run.underline = overrides["underline"]
-        if "size" in overrides:
-            size_pt = half_points_to_pt(overrides["size"])
-            if size_pt is not None:
-                run.font.size = Pt(size_pt)
-        if "color" in overrides and overrides["color"].startswith("#"):
-            hex_color = overrides["color"][1:]
-            if len(hex_color) == 6:
-                run.font.color.rgb = RGBColor.from_string(hex_color)
-        if overrides.get("font_ascii"):
-            run.font.name = overrides["font_ascii"]
-        if overrides.get("font_east_asia"):
-            rPr = run._element.get_or_add_rPr()
-            rFonts = rPr.find(qn('w:rFonts'))
-            if rFonts is None:
-                rFonts = OxmlElement('w:rFonts')
-                rPr.append(rFonts)
-            rFonts.set(qn('w:eastAsia'), overrides["font_east_asia"])
+        _apply_run_overrides(run, overrides)

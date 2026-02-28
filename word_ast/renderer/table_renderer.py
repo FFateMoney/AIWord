@@ -1,6 +1,21 @@
 from docx.oxml.ns import qn
+from lxml import etree
 
 from .paragraph_renderer import render_paragraph
+
+_SAFE_XML_PARSER = etree.XMLParser(resolve_entities=False)
+
+
+def _apply_raw_tcPr(tc_element, raw_tcPr: str) -> None:
+    try:
+        new_tcPr = etree.fromstring(raw_tcPr, _SAFE_XML_PARSER)
+    except etree.XMLSyntaxError:
+        return
+    old_tcPr = tc_element.find(qn("w:tcPr"))
+    if old_tcPr is not None:
+        tc_element.remove(old_tcPr)
+    tc_element.insert(0, new_tcPr)
+
 
 
 def _apply_table_style(table, style_id: str | None, styles: dict | None):
@@ -34,6 +49,8 @@ def render_table(doc, block: dict, styles: dict | None = None):
             if c_idx >= col_count:
                 continue
             tc = table.cell(r_idx, c_idx)
+            if "_raw_tcPr" in cell:
+                _apply_raw_tcPr(tc._element, cell["_raw_tcPr"])
             # Remove default empty paragraph(s)
             for p_el in tc._element.findall(qn('w:p')):
                 tc._element.remove(p_el)

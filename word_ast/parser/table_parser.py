@@ -1,5 +1,6 @@
 from docx.table import Table
 from docx.table import _Cell
+from lxml import etree
 
 from word_ast.parser.paragraph_parser import parse_paragraph_block
 
@@ -56,14 +57,24 @@ def parse_table_block(table: Table, block_id: str) -> dict:
             for p_idx, p in enumerate(cell.paragraphs):
                 p_block = parse_paragraph_block(p, f"{block_id}.r{row_idx}c{col_cursor}.p{p_idx}")
                 cell_paragraphs.append(p_block)
-            cells.append(
-                {
-                    "id": f"{block_id}.r{row_idx}c{col_cursor}",
-                    "content": cell_paragraphs,
-                    "col_span": col_span,
-                    "row_span": row_span,
-                }
-            )
+
+            raw_tcPr = None
+            try:
+                tcPr_el = tc.tcPr
+                if tcPr_el is not None:
+                    raw_tcPr = etree.tostring(tcPr_el, encoding="unicode")
+            except (AttributeError, TypeError):
+                pass
+
+            cell_data = {
+                "id": f"{block_id}.r{row_idx}c{col_cursor}",
+                "content": cell_paragraphs,
+                "col_span": col_span,
+                "row_span": row_span,
+            }
+            if raw_tcPr:
+                cell_data["_raw_tcPr"] = raw_tcPr
+            cells.append(cell_data)
             col_cursor += col_span
         rows.append({"cells": cells})
     return {"id": block_id, "type": "Table", "style": style_id, "rows": rows}
