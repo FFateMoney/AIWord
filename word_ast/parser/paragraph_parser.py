@@ -155,13 +155,19 @@ def _parse_paragraph_format(paragraph: Paragraph) -> dict:
 
 def _iter_runs(paragraph: Paragraph):
     """Yield Run objects for all ``<w:r>`` elements in *paragraph*,
-    including those nested inside ``<w:hyperlink>`` elements."""
+    including those nested inside ``<w:hyperlink>`` elements.
+
+    python-docx ``paragraph.runs`` only returns direct ``<w:r>`` children,
+    so we access the underlying lxml element to also reach runs wrapped in
+    ``<w:hyperlink>`` (used by TOC entries, cross-references, etc.).
+    """
+    _tag_r = qn("w:r")
+    _tag_hyperlink = qn("w:hyperlink")
     for child in paragraph._element:
-        tag = child.tag.split("}")[-1]
-        if tag == "r":
+        if child.tag == _tag_r:
             yield Run(child, paragraph)
-        elif tag == "hyperlink":
-            for r_el in child.findall(qn("w:r")):
+        elif child.tag == _tag_hyperlink:
+            for r_el in child.findall(_tag_r):
                 yield Run(r_el, paragraph)
 
 

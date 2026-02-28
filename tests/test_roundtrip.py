@@ -4,8 +4,9 @@ import zipfile
 from pathlib import Path
 
 from docx import Document
-from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor, Inches
 from lxml import etree
 
@@ -521,7 +522,6 @@ def test_roundtrip_preserves_hyperlink_text(tmp_path: Path):
     p = doc.add_paragraph()
     p_el = p._element
 
-    from docx.oxml import OxmlElement
     hyperlink = OxmlElement("w:hyperlink")
     run_el = OxmlElement("w:r")
     t_el = OxmlElement("w:t")
