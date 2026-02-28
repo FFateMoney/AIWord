@@ -72,6 +72,8 @@ def test_render_uses_style_name_fallback_for_style_id(tmp_path: Path):
 
 
 def test_roundtrip_preserves_paragraph_style_font_defaults(tmp_path: Path):
+    """Runs without explicit formatting inherit from the paragraph style.
+    The paragraph style is applied correctly and the text content is preserved."""
     src = tmp_path / "styled.docx"
     out = tmp_path / "styled-out.docx"
 
@@ -90,11 +92,13 @@ def test_roundtrip_preserves_paragraph_style_font_defaults(tmp_path: Path):
     render_ast(ast, out)
 
     rebuilt = Document(out)
-    run = rebuilt.paragraphs[0].runs[0]
-    assert run.font.name == "Arial"
-    assert run.font.size.pt == 24
-    assert str(run.font.color.rgb) == "000000"
-    assert run.bold is True
+    para = rebuilt.paragraphs[0]
+    assert para.text == "Styled title"
+    assert para.style.name == "Heading 1"
+    # Runs without explicit formatting should NOT have explicit overrides;
+    # they inherit from the paragraph style, avoiding fake-bold artifacts.
+    run = para.runs[0]
+    assert run.font.name is None
 
 
 def _get_east_asia_font(run) -> str | None:
@@ -172,7 +176,9 @@ def test_roundtrip_multi_run_different_fonts(tmp_path: Path):
 
 def test_roundtrip_style_defaults_with_run_overrides(tmp_path: Path):
     """When a style sets defaults and a run overrides only some properties,
-    the non-overridden properties must come from the style defaults."""
+    only the explicitly overridden properties should be present on the run.
+    Non-overridden properties come from the paragraph style, avoiding
+    fake-bold artifacts and formatting corruption."""
     src = tmp_path / "override.docx"
     out = tmp_path / "override-out.docx"
 
@@ -207,25 +213,19 @@ def test_roundtrip_style_defaults_with_run_overrides(tmp_path: Path):
     render_ast(ast, out)
 
     rebuilt = Document(out)
-    runs = rebuilt.paragraphs[0].runs
+    para = rebuilt.paragraphs[0]
+    assert para.style.name == "Heading 1"
+    runs = para.runs
 
-    # Run 1: all from style defaults
-    assert runs[0].font.name == "Arial"
-    assert _get_east_asia_font(runs[0]) == "黑体"
-    assert runs[0].bold is True
-    assert runs[0].font.size.pt == 24
-    assert str(runs[0].font.color.rgb) == "000080"
+    # Run 1: no explicit overrides — inherits everything from the style
+    assert runs[0].font.name is None
+    assert runs[0].bold is None
 
-    # Run 2: color overridden, rest from defaults
-    assert runs[1].font.name == "Arial"
-    assert _get_east_asia_font(runs[1]) == "黑体"
+    # Run 2: only color overridden; other properties inherit from style
     assert str(runs[1].font.color.rgb) == "FF0000"
-    assert runs[1].font.size.pt == 24
 
-    # Run 3: ASCII font overridden, east-asian still from defaults
+    # Run 3: only ASCII font overridden
     assert runs[2].font.name == "Times New Roman"
-    assert _get_east_asia_font(runs[2]) == "黑体"
-    assert runs[2].font.size.pt == 24
 
 
 def _assert_no_heading_colors_in_styles(styles_element):
@@ -963,3 +963,112 @@ def test_roundtrip_non_toc_sdt_still_unwrapped(tmp_path: Path):
     rebuilt = Document(out)
     full = " ".join(p.text for p in rebuilt.paragraphs)
     assert "Inside Plain SDT" in full
+
+
+def test_roundtrip_heading_runs_no_fake_bold(tmp_path: Path):
+    """Heading runs without explicit bold must NOT receive an explicit
+    ``<w:b>`` element after round-trip.  The bold appearance should come
+    from the heading style, not from run-level overrides (fake-bold)."""
+    src = tmp_path / "fake_bold.docx"
+    out = tmp_path / "fake_bold-out.docx"
+
+    doc = Document()
+    h = doc.add_paragraph("Heading Text")
+    h.style = "Heading 1"
+    doc.save(src)
+
+    ast = parse_docx(src)
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    para = rebuilt.paragraphs[0]
+    assert para.style.name == "Heading 1"
+    for run in para.runs:
+        rPr = run._element.find(qn("w:rPr"))
+        if rPr is not None:
+            b_el = rPr.find(qn("w:b"))
+            assert b_el is None, (
+                "Run in heading should not have explicit <w:b>; "
+                "bold must come from the paragraph style"
+            )
+
+
+def test_roundtrip_no_invalid_style_references(tmp_path: Path):
+    """Raw pPr/rPr must NOT carry ``<w:pStyle>`` or ``<w:rStyle>``
+    references that could point to non-existent styles in the target
+    document, which would cause Word to report file corruption."""
+    src = tmp_path / "style_ref.docx"
+    out = tmp_path / "style_ref-out.docx"
+
+    doc = Document()
+    p = doc.add_paragraph("Normal text")
+    r = p.add_run(" bold")
+    r.bold = True
+    doc.save(src)
+
+    ast = parse_docx(src)
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    body = rebuilt.element.body
+    for r_el in body.iter(qn("w:r")):
+        rPr = r_el.find(qn("w:rPr"))
+        if rPr is not None:
+            rStyle = rPr.find(qn("w:rStyle"))
+            assert rStyle is None, (
+                "Run rPr should not contain <w:rStyle> after rendering"
+            )
+
+    for p_el in body.iter(qn("w:p")):
+        pPr = p_el.find(qn("w:pPr"))
+        if pPr is not None:
+            numPr = pPr.find(qn("w:numPr"))
+            assert numPr is None, (
+                "Paragraph pPr should not contain <w:numPr> after rendering"
+            )
+
+
+def test_roundtrip_raw_pPr_preserves_formatting(tmp_path: Path):
+    """Raw pPr formatting (alignment, spacing) must be preserved even though
+    ``<w:pStyle>`` is stripped from the raw XML."""
+    src = tmp_path / "raw_pPr.docx"
+    out = tmp_path / "raw_pPr-out.docx"
+
+    doc = Document()
+    p = doc.add_paragraph("Centered")
+    p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(12)
+    doc.save(src)
+
+    ast = parse_docx(src)
+    # Ensure raw pPr is captured
+    pf = ast["document"]["body"][0].get("paragraph_format", {})
+    assert "_raw_pPr" in pf, "Parser must capture _raw_pPr"
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    para = rebuilt.paragraphs[0]
+    assert para.paragraph_format.alignment == WD_ALIGN_PARAGRAPH.CENTER
+    assert para.text == "Centered"
+
+
+def test_roundtrip_explicit_bold_preserved(tmp_path: Path):
+    """A run with explicit bold must preserve it through a round-trip
+    via the ``_raw_rPr`` mechanism (not paragraph_defaults)."""
+    src = tmp_path / "explicit_bold.docx"
+    out = tmp_path / "explicit_bold-out.docx"
+
+    doc = Document()
+    p = doc.add_paragraph()
+    r = p.add_run("Bold Text")
+    r.bold = True
+    doc.save(src)
+
+    ast = parse_docx(src)
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    run = rebuilt.paragraphs[0].runs[0]
+    assert run.text == "Bold Text"
+    assert run.bold is True
