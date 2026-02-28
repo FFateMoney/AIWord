@@ -1,15 +1,13 @@
 from docx.oxml.ns import qn
-from lxml import etree
+from docx.oxml.parser import parse_xml
 
 from .paragraph_renderer import render_paragraph
-
-_SAFE_XML_PARSER = etree.XMLParser(resolve_entities=False)
 
 
 def _apply_raw_tcPr(tc_element, raw_tcPr: str) -> None:
     try:
-        new_tcPr = etree.fromstring(raw_tcPr, _SAFE_XML_PARSER)
-    except etree.XMLSyntaxError:
+        new_tcPr = parse_xml(raw_tcPr)
+    except Exception:
         return
     old_tcPr = tc_element.find(qn("w:tcPr"))
     if old_tcPr is not None:

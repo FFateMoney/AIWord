@@ -4,8 +4,8 @@ import io
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.oxml.parser import parse_xml
 from docx.shared import RGBColor, Pt, Twips
-from lxml import etree
 
 from word_ast.utils.units import half_points_to_pt
 
@@ -17,14 +17,15 @@ _ALIGN_FROM_STR = {
 }
 
 
-_SAFE_XML_PARSER = etree.XMLParser(resolve_entities=False)
-
-
 def _apply_raw_rPr(run, raw_rPr: str) -> None:
     try:
-        new_rPr = etree.fromstring(raw_rPr, _SAFE_XML_PARSER)
-    except etree.XMLSyntaxError:
+        new_rPr = parse_xml(raw_rPr)
+    except Exception:
         return
+    for tag in (qn("w:rStyle"),):
+        el = new_rPr.find(tag)
+        if el is not None:
+            new_rPr.remove(el)
     r_el = run._element
     old_rPr = r_el.find(qn("w:rPr"))
     if old_rPr is not None:
@@ -34,9 +35,13 @@ def _apply_raw_rPr(run, raw_rPr: str) -> None:
 
 def _apply_raw_pPr(paragraph, raw_pPr: str) -> None:
     try:
-        new_pPr = etree.fromstring(raw_pPr, _SAFE_XML_PARSER)
-    except etree.XMLSyntaxError:
+        new_pPr = parse_xml(raw_pPr)
+    except Exception:
         return
+    for tag in (qn("w:pStyle"), qn("w:numPr")):
+        el = new_pPr.find(tag)
+        if el is not None:
+            new_pPr.remove(el)
     p_el = paragraph._element
     old_pPr = p_el.find(qn("w:pPr"))
     if old_pPr is not None:
@@ -70,6 +75,7 @@ def _apply_paragraph_format(paragraph, fmt: dict):
         return
     if "_raw_pPr" in fmt:
         _apply_raw_pPr(paragraph, fmt["_raw_pPr"])
+        return
     pf = paragraph.paragraph_format
     alignment = fmt.get("alignment")
     if alignment and alignment in _ALIGN_FROM_STR:
@@ -90,6 +96,7 @@ def _apply_run_overrides(run, overrides: dict) -> None:
     """Apply run-level formatting overrides to *run*."""
     if "_raw_rPr" in overrides:
         _apply_raw_rPr(run, overrides["_raw_rPr"])
+        return
     if "bold" in overrides:
         run.bold = overrides["bold"]
     if "italic" in overrides:
@@ -117,10 +124,9 @@ def _apply_run_overrides(run, overrides: dict) -> None:
 
 def render_paragraph(doc, block: dict, styles: dict | None = None):
     paragraph = doc.add_paragraph()
-    _apply_paragraph_style(paragraph, block.get("style"), styles)
     _apply_paragraph_format(paragraph, block.get("paragraph_format", {}))
+    _apply_paragraph_style(paragraph, block.get("style"), styles)
 
-    paragraph_defaults = block.get("default_run", {})
     for piece in block.get("content", []):
         if piece.get("type") == "InlineImage":
             try:
@@ -139,5 +145,5 @@ def render_paragraph(doc, block: dict, styles: dict | None = None):
         if piece.get("type") != "Text":
             continue
         run = paragraph.add_run(piece.get("text", ""))
-        overrides = {**paragraph_defaults, **piece.get("overrides", {})}
-        _apply_run_overrides(run, overrides)
+        run_overrides = piece.get("overrides", {})
+        _apply_run_overrides(run, run_overrides)
