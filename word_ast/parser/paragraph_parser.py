@@ -2,6 +2,7 @@ import base64
 import copy
 
 from docx.enum.dml import MSO_COLOR_TYPE
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 from docx.text.run import Run
@@ -41,7 +42,67 @@ def _read_east_asia_font(font) -> str | None:
         return None
 
 
-def _font_to_overrides(font, *, skip_theme_color: bool = False) -> dict:
+# Run properties that can be inherited from a style and should be captured in
+# _raw_rPr even when not set directly on the run element.
+_INHERITABLE_RPR_TAGS = {
+    qn("w:rFonts"),    # 字体（ascii/eastAsia/hAnsi/cs）font family
+    qn("w:sz"),        # 字号（半磅）font size in half-points
+    qn("w:szCs"),      # 复杂文字字号 complex script font size
+    qn("w:color"),     # 颜色（非主题色）font color (non-theme)
+    qn("w:lang"),      # 语言 language
+    qn("w:kern"),      # 字距 kerning
+    qn("w:spacing"),   # 字符间距 character spacing
+}
+
+
+def _inherit_style_rPr(rPr_el, paragraph) -> None:  # rPr_el: lxml _Element
+    """遍历 run 所在段落的样式继承链，将缺失的 <w:rPr> 子元素补入 rPr_el。
+
+    Walk the paragraph's style inheritance chain and inject any <w:rPr> child
+    elements that are absent from the run's own rPr.
+
+    Mutates *rPr_el* in place by appending deep-copies of inheritable tags
+    found on ancestor styles.  Tags already present on the run are never
+    overwritten (run-level values take precedence over style values).
+
+    This ensures that formatting defined on the style (e.g. a font family from
+    "Heading 1") is captured in _raw_rPr even when the run itself carries no
+    explicit rPr, preventing font substitution on round-trip.
+    """
+    present_tags = {child.tag for child in rPr_el}
+
+    style = paragraph.style
+    while style is not None:
+        try:
+            style_el = style.element
+            style_rPr = style_el.rPr if style_el is not None else None
+        except AttributeError:
+            style_rPr = None
+        if style_rPr is not None:
+            for child in style_rPr:
+                if child.tag in _INHERITABLE_RPR_TAGS and child.tag not in present_tags:
+                    # Skip <w:color> with a w:themeColor attribute — theme colors
+                    # must come from the style definition, not be materialised onto
+                    # individual runs, to avoid corrupting the theme appearance.
+                    if child.tag == qn("w:color") and child.get(qn("w:themeColor")):
+                        continue
+                    # deepcopy to avoid mutating the shared style XML
+                    rPr_el.append(copy.deepcopy(child))
+                    present_tags.add(child.tag)
+        try:
+            style = style.base_style
+        except AttributeError:
+            break
+
+
+def _font_to_overrides(font, *, skip_theme_color: bool = False, paragraph=None) -> dict:
+    """提取 run 的字体格式覆盖项，并序列化 _raw_rPr（含样式继承的完整信息）。
+
+    Extract run-level font formatting overrides.  When *paragraph* is supplied
+    the resulting ``_raw_rPr`` is enriched with properties inherited from the
+    paragraph's style chain so that fonts and sizes are preserved on round-trip
+    even when the run itself carries no explicit <w:rPr>.
+    """
     overrides = {}
     if font is None:
         return overrides
@@ -61,6 +122,7 @@ def _font_to_overrides(font, *, skip_theme_color: bool = False) -> dict:
     if size is not None:
         overrides["size"] = size
 
+    # Read directly-set font names before any inheritance augmentation
     ascii_font = font.name
     ea_font = _read_east_asia_font(font)
     if ascii_font:
@@ -70,7 +132,18 @@ def _font_to_overrides(font, *, skip_theme_color: bool = False) -> dict:
 
     try:
         rPr_el = font._element.rPr
-        if rPr_el is not None:
+        if rPr_el is None:
+            if paragraph is not None:
+                # 1d: run has no <w:rPr> — create a detached element, populate
+                # via style inheritance, and store only if non-empty.
+                rPr_el = OxmlElement("w:rPr")
+                _inherit_style_rPr(rPr_el, paragraph)
+                if len(rPr_el):
+                    overrides["_raw_rPr"] = etree.tostring(rPr_el, encoding="unicode")
+        else:
+            if paragraph is not None:
+                # Append inherited style properties absent from the run's own rPr
+                _inherit_style_rPr(rPr_el, paragraph)
             overrides["_raw_rPr"] = etree.tostring(rPr_el, encoding="unicode")
     except (AttributeError, TypeError):
         pass
@@ -213,6 +286,13 @@ def _parse_paragraph_format(paragraph: Paragraph) -> dict:
             # paragraph's own pPr (e.g. jc=center defined on a style).
             _inherit_style_pPr(pPr_el, paragraph)
             fmt["_raw_pPr"] = etree.tostring(pPr_el, encoding="unicode")
+        else:
+            # 1c: paragraph has no explicit <w:pPr> — create a detached element,
+            # populate via style inheritance, and store only if non-empty.
+            pPr_el = OxmlElement("w:pPr")
+            _inherit_style_pPr(pPr_el, paragraph)
+            if len(pPr_el):
+                fmt["_raw_pPr"] = etree.tostring(pPr_el, encoding="unicode")
     except (AttributeError, TypeError):
         pass
 
@@ -263,7 +343,7 @@ def parse_paragraph_block(paragraph: Paragraph, block_id: str) -> dict:
             content.append(image_node)
             continue
         item: dict = {"type": "Text", "text": run.text}
-        overrides = _font_to_overrides(run.font)
+        overrides = _font_to_overrides(run.font, paragraph=paragraph)
         if overrides:
             item["overrides"] = overrides
         content.append(item)
