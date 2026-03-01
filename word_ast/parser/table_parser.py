@@ -1,3 +1,4 @@
+from docx.oxml.ns import qn
 from docx.table import Table
 from docx.table import _Cell
 from lxml import etree
@@ -30,9 +31,29 @@ def _tc_at_column(tr, col_idx: int):
 
 def parse_table_block(table: Table, block_id: str) -> dict:
     style_id = table.style.style_id if table.style else None
+
+    # Capture the raw table-level properties so the renderer can restore
+    # alignment, width, borders, and other tblPr attributes.
+    raw_tblPr = None
+    try:
+        tblPr_el = table._tbl.tblPr
+        if tblPr_el is not None:
+            raw_tblPr = etree.tostring(tblPr_el, encoding="unicode")
+    except (AttributeError, TypeError):
+        pass
+
     rows = []
     xml_rows = table._tbl.tr_lst
     for row_idx, tr in enumerate(xml_rows):
+        # Capture raw row properties (e.g. row height, tblHeader flag).
+        raw_trPr = None
+        try:
+            trPr_el = tr.find(qn("w:trPr"))
+            if trPr_el is not None:
+                raw_trPr = etree.tostring(trPr_el, encoding="unicode")
+        except (AttributeError, TypeError):
+            pass
+
         cells = []
         col_cursor = 0
         for tc in tr.tc_lst:
@@ -76,5 +97,11 @@ def parse_table_block(table: Table, block_id: str) -> dict:
                 cell_data["_raw_tcPr"] = raw_tcPr
             cells.append(cell_data)
             col_cursor += col_span
-        rows.append({"cells": cells})
-    return {"id": block_id, "type": "Table", "style": style_id, "rows": rows}
+        row_data: dict = {"cells": cells}
+        if raw_trPr:
+            row_data["_raw_trPr"] = raw_trPr
+        rows.append(row_data)
+    block: dict = {"id": block_id, "type": "Table", "style": style_id, "rows": rows}
+    if raw_tblPr:
+        block["_raw_tblPr"] = raw_tblPr
+    return block

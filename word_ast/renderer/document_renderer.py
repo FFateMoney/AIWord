@@ -95,6 +95,11 @@ def _render_meta(doc, meta: dict):
     page = meta.get("page", {})
     margin = page.get("margin", {})
     section = doc.sections[0]
+    # Restore page dimensions when available
+    if "width" in page:
+        section.page_width = Twips(page["width"])
+    if "height" in page:
+        section.page_height = Twips(page["height"])
     for key, field in (("top_margin", "top"), ("bottom_margin", "bottom"), ("left_margin", "left"), ("right_margin", "right")):
         if field in margin:
             setattr(section, key, Twips(margin[field]))
