@@ -1411,3 +1411,113 @@ def test_roundtrip_preserves_table_raw_trPr(tmp_path: Path):
     trHeight_out = trPr_out.find(qn("w:trHeight"))
     assert trHeight_out is not None, "<w:trHeight> must be restored in rendered row"
     assert trHeight_out.get(qn("w:val")) == "720"
+
+
+def test_roundtrip_style_inherited_alignment(tmp_path: Path):
+    """Alignment defined on a style (not directly on the paragraph) must be
+    captured in _raw_pPr and preserved through a parse → render round-trip."""
+    src = tmp_path / "style_align.docx"
+    out = tmp_path / "style_align-out.docx"
+
+    doc = Document()
+    # Create a custom style with center alignment baked in
+    styles = doc.styles
+    custom = styles.add_style("CenterStyle", 1)  # 1 = WD_STYLE_TYPE.PARAGRAPH
+    # Inject <w:jc w:val="center"/> into the style's pPr via raw XML
+    style_el = custom.element
+    pPr_style = style_el.get_or_add_pPr()
+    jc_el = OxmlElement("w:jc")
+    jc_el.set(qn("w:val"), "center")
+    pPr_style.append(jc_el)
+
+    p = doc.add_paragraph("Style-inherited center")
+    p.style = custom
+    doc.save(src)
+
+    ast = parse_docx(src)
+    pf = ast["document"]["body"][0].get("paragraph_format", {})
+    assert "_raw_pPr" in pf, "Parser must capture _raw_pPr"
+    assert "center" in pf["_raw_pPr"], "_raw_pPr must contain inherited <w:jc> center"
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    para = rebuilt.paragraphs[0]
+    assert para.text == "Style-inherited center"
+    assert para.paragraph_format.alignment == WD_ALIGN_PARAGRAPH.CENTER, (
+        "Style-inherited center alignment must be preserved after round-trip"
+    )
+
+
+def test_roundtrip_style_inherited_spacing(tmp_path: Path):
+    """Spacing defined on a style must be captured in _raw_pPr and preserved
+    through a parse → render round-trip."""
+    src = tmp_path / "style_spacing.docx"
+    out = tmp_path / "style_spacing-out.docx"
+
+    doc = Document()
+    styles = doc.styles
+    custom = styles.add_style("SpacingStyle", 1)
+    style_el = custom.element
+    pPr_style = style_el.get_or_add_pPr()
+    # Add <w:spacing w:before="240"/> (240 twips = 12 pt)
+    spacing_el = OxmlElement("w:spacing")
+    spacing_el.set(qn("w:before"), "240")
+    pPr_style.append(spacing_el)
+
+    p = doc.add_paragraph("Style-inherited spacing")
+    p.style = custom
+    doc.save(src)
+
+    ast = parse_docx(src)
+    pf = ast["document"]["body"][0].get("paragraph_format", {})
+    assert "_raw_pPr" in pf, "Parser must capture _raw_pPr"
+    assert "spacing" in pf["_raw_pPr"], "_raw_pPr must contain inherited <w:spacing>"
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    para = rebuilt.paragraphs[0]
+    assert para.text == "Style-inherited spacing"
+    raw_pPr = para._element.pPr
+    assert raw_pPr is not None
+    spacing_out = raw_pPr.find(qn("w:spacing"))
+    assert spacing_out is not None, "<w:spacing> must be restored after round-trip"
+    assert spacing_out.get(qn("w:before")) == "240"
+
+
+def test_roundtrip_style_inherited_indentation(tmp_path: Path):
+    """Indentation defined on a style must be captured in _raw_pPr and
+    preserved through a parse → render round-trip."""
+    src = tmp_path / "style_indent.docx"
+    out = tmp_path / "style_indent-out.docx"
+
+    doc = Document()
+    styles = doc.styles
+    custom = styles.add_style("IndentStyle", 1)
+    style_el = custom.element
+    pPr_style = style_el.get_or_add_pPr()
+    # Add <w:ind w:left="720"/> (720 twips = 0.5 inch)
+    ind_el = OxmlElement("w:ind")
+    ind_el.set(qn("w:left"), "720")
+    pPr_style.append(ind_el)
+
+    p = doc.add_paragraph("Style-inherited indent")
+    p.style = custom
+    doc.save(src)
+
+    ast = parse_docx(src)
+    pf = ast["document"]["body"][0].get("paragraph_format", {})
+    assert "_raw_pPr" in pf, "Parser must capture _raw_pPr"
+    assert "ind" in pf["_raw_pPr"], "_raw_pPr must contain inherited <w:ind>"
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    para = rebuilt.paragraphs[0]
+    assert para.text == "Style-inherited indent"
+    raw_pPr = para._element.pPr
+    assert raw_pPr is not None
+    ind_out = raw_pPr.find(qn("w:ind"))
+    assert ind_out is not None, "<w:ind> must be restored after round-trip"
+    assert ind_out.get(qn("w:left")) == "720"

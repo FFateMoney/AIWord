@@ -1,4 +1,5 @@
 import base64
+import copy
 
 from docx.enum.dml import MSO_COLOR_TYPE
 from docx.oxml.ns import qn
@@ -137,6 +138,53 @@ def _parse_inline_image(run) -> dict | None:
 
 _ALIGNMENT_MAP = {0: "left", 1: "center", 2: "right", 3: "justify"}
 
+# Paragraph properties that can be inherited from a style and should be
+# captured in _raw_pPr even when not set directly on the paragraph element.
+_INHERITABLE_PPR_TAGS = {
+    qn("w:jc"),              # alignment (e.g. center)
+    qn("w:ind"),             # indentation
+    qn("w:spacing"),         # line/paragraph spacing
+    qn("w:keepNext"),        # keep with next paragraph
+    qn("w:keepLines"),       # keep lines together
+    qn("w:pageBreakBefore"), # page break before paragraph
+    qn("w:outlineLvl"),      # outline level
+    qn("w:shd"),             # shading/background
+    qn("w:pBdr"),            # paragraph border
+}
+
+
+def _inherit_style_pPr(pPr_el, paragraph) -> None:
+    """Walk the paragraph's style inheritance chain and inject any <w:pPr>
+    child elements that are absent from the paragraph's own pPr.
+
+    Mutates *pPr_el* in place by appending deep-copies of inheritable tags
+    found on ancestor styles.  Tags already present on the paragraph are never
+    overwritten (paragraph-level values take precedence over style values).
+
+    This ensures that formatting defined on the style (e.g. <w:jc> for center
+    alignment) is captured in _raw_pPr even when python-docx does not surface
+    it via ParagraphFormat properties (which only reflect directly-set values).
+    """
+    # Collect tags already present so we never overwrite paragraph-level values
+    present_tags = {child.tag for child in pPr_el}
+
+    style = paragraph.style
+    while style is not None:
+        try:
+            style_pPr = style.element.pPr if style.element is not None else None
+        except AttributeError:
+            style_pPr = None
+        if style_pPr is not None:
+            for child in style_pPr:
+                if child.tag in _INHERITABLE_PPR_TAGS and child.tag not in present_tags:
+                    # deepcopy to avoid mutating the shared style XML
+                    pPr_el.append(copy.deepcopy(child))
+                    present_tags.add(child.tag)
+        try:
+            style = style.base_style
+        except AttributeError:
+            break
+
 
 def _parse_paragraph_format(paragraph: Paragraph) -> dict:
     """Extract paragraph-level formatting (alignment, indentation, spacing)."""
@@ -161,6 +209,9 @@ def _parse_paragraph_format(paragraph: Paragraph) -> dict:
     try:
         pPr_el = paragraph._element.pPr
         if pPr_el is not None:
+            # Inject inherited style properties that are absent from the
+            # paragraph's own pPr (e.g. jc=center defined on a style).
+            _inherit_style_pPr(pPr_el, paragraph)
             fmt["_raw_pPr"] = etree.tostring(pPr_el, encoding="unicode")
     except (AttributeError, TypeError):
         pass
