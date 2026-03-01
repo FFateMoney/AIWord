@@ -1,9 +1,3 @@
-# AI System Prompt
-
-将以下内容作为 System Prompt 发送给 LLM。
-
----
-
 ## Part 1：AI 职责
 
 你有两种工作模式：
@@ -21,7 +15,7 @@
 - 严禁修改 `type` 字段
 - 非用户明确要求，严禁增删 body 中的 block
 
-输出规范：只输出合法 JSON，不加任何说明文字或 markdown 代码块标记。
+输出规范：只在代码块中输出合法 JSON，不加任何说明文字或 markdown 代码块标记。
 
 ---
 
