@@ -1230,3 +1230,184 @@ def test_rendered_rPr_has_no_rPrChange(tmp_path: Path):
             )
 
     assert rebuilt.paragraphs[0].runs[0].bold is True
+
+
+def test_render_paragraph_style_not_overwritten_by_raw_pPr(tmp_path: Path):
+    """When _raw_pPr contains no <w:pStyle>, the paragraph style set by
+    _apply_paragraph_style must NOT be lost after _apply_raw_pPr runs.
+
+    This is the core regression for the 'render_paragraph order' fix: style
+    must be applied BEFORE _apply_paragraph_format so that pStyle survives."""
+    out = tmp_path / "style_order.docx"
+
+    raw_pPr = (
+        '<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:jc w:val="center"/>'
+        '</w:pPr>'
+    )
+
+    ast = {
+        "schema_version": "1.0",
+        "document": {
+            "meta": {},
+            "styles": {
+                "Heading1": {"style_id": "Heading1", "name": "Heading 1",
+                             "type": "paragraph", "based_on": "Normal"},
+            },
+            "body": [
+                {
+                    "id": "p0", "type": "Paragraph", "style": "Heading1",
+                    "paragraph_format": {"_raw_pPr": raw_pPr},
+                    "content": [{"type": "Text", "text": "Title"}],
+                },
+            ],
+            "passthrough": {},
+        },
+    }
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    para = rebuilt.paragraphs[0]
+    # Style must survive the _raw_pPr application
+    assert para.style.name == "Heading 1", (
+        f"Paragraph style must be preserved after _raw_pPr; got {para.style.name!r}"
+    )
+    # Alignment from _raw_pPr must also survive
+    assert para.paragraph_format.alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+
+def test_roundtrip_preserves_rStyle_in_raw_rPr(tmp_path: Path):
+    """<w:rStyle> inside a run's rPr must be preserved after a round-trip
+    so that character styles are not lost."""
+    src = tmp_path / "rStyle.docx"
+    out = tmp_path / "rStyle-out.docx"
+
+    doc = Document()
+    p = doc.add_paragraph()
+    run = p.add_run("Styled Run")
+    # Set an rStyle via raw XML manipulation
+    rPr = run._element.get_or_add_rPr()
+    from docx.oxml import OxmlElement as _OE
+    rStyle_el = _OE("w:rStyle")
+    rStyle_el.set(qn("w:val"), "DefaultParagraphFont")
+    rPr.insert(0, rStyle_el)
+    doc.save(src)
+
+    ast = parse_docx(src)
+    # Verify the parser captures the rStyle in _raw_rPr
+    overrides = ast["document"]["body"][0]["content"][0].get("overrides", {})
+    assert "_raw_rPr" in overrides
+    assert "DefaultParagraphFont" in overrides["_raw_rPr"]
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    r_el = rebuilt.paragraphs[0].runs[0]._element
+    rPr_out = r_el.find(qn("w:rPr"))
+    assert rPr_out is not None
+    rStyle_out = rPr_out.find(qn("w:rStyle"))
+    assert rStyle_out is not None, "<w:rStyle> must be preserved in rendered rPr"
+    assert rStyle_out.get(qn("w:val")) == "DefaultParagraphFont"
+
+
+def test_roundtrip_preserves_page_size(tmp_path: Path):
+    """Page width and height must survive a parse → render round-trip."""
+    src = tmp_path / "page_size.docx"
+    out = tmp_path / "page_size-out.docx"
+
+    from docx.shared import Inches
+    doc = Document()
+    section = doc.sections[0]
+    # Set A4 dimensions (8268 × 11692 twips)
+    section.page_width = Inches(8.27)
+    section.page_height = Inches(11.69)
+    doc.add_paragraph("Hello")
+    doc.save(src)
+
+    ast = parse_docx(src)
+    page = ast["document"]["meta"]["page"]
+    assert "width" in page
+    assert "height" in page
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    out_section = rebuilt.sections[0]
+    # Allow ±1 twip rounding tolerance
+    assert abs(out_section.page_width.twips - page["width"]) <= 1, (
+        f"page_width mismatch: {out_section.page_width.twips} vs {page['width']}"
+    )
+    assert abs(out_section.page_height.twips - page["height"]) <= 1, (
+        f"page_height mismatch: {out_section.page_height.twips} vs {page['height']}"
+    )
+
+
+def test_roundtrip_preserves_table_raw_tblPr(tmp_path: Path):
+    """_raw_tblPr must be captured by the parser and applied by the renderer
+    so that table-level properties (e.g. alignment) survive a round-trip."""
+    src = tmp_path / "tblPr.docx"
+    out = tmp_path / "tblPr-out.docx"
+
+    doc = Document()
+    table = doc.add_table(rows=1, cols=2)
+    table.style = "Table Grid"
+    # Set table-level alignment to center via raw XML
+    tblPr = table._tbl.tblPr
+    jc_el = OxmlElement("w:jc")
+    jc_el.set(qn("w:val"), "center")
+    tblPr.append(jc_el)
+    table.cell(0, 0).text = "A"
+    table.cell(0, 1).text = "B"
+    doc.save(src)
+
+    ast = parse_docx(src)
+    table_ast = next(b for b in ast["document"]["body"] if b["type"] == "Table")
+    assert "_raw_tblPr" in table_ast, "Parser must capture _raw_tblPr"
+    assert "center" in table_ast["_raw_tblPr"], "_raw_tblPr must contain alignment info"
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    tblPr_out = rebuilt.tables[0]._tbl.tblPr
+    assert tblPr_out is not None
+    jc_out = tblPr_out.find(qn("w:jc"))
+    assert jc_out is not None, "Table alignment <w:jc> must be restored"
+    assert jc_out.get(qn("w:val")) == "center"
+
+
+def test_roundtrip_preserves_table_raw_trPr(tmp_path: Path):
+    """_raw_trPr must be captured by the parser and applied by the renderer
+    so that row-level properties (e.g. row height) survive a round-trip."""
+    src = tmp_path / "trPr.docx"
+    out = tmp_path / "trPr-out.docx"
+
+    from docx.shared import Twips as _Twips
+    doc = Document()
+    table = doc.add_table(rows=2, cols=1)
+    table.style = "Table Grid"
+    # Set row height on the first row via raw XML
+    tr = table.rows[0]._tr
+    trPr = tr.get_or_add_trPr()
+    trHeight_el = OxmlElement("w:trHeight")
+    trHeight_el.set(qn("w:val"), "720")  # 0.5 inch in twips
+    trHeight_el.set(qn("w:hRule"), "exact")
+    trPr.append(trHeight_el)
+    table.cell(0, 0).text = "Row 1"
+    table.cell(1, 0).text = "Row 2"
+    doc.save(src)
+
+    ast = parse_docx(src)
+    row0_ast = ast["document"]["body"][0]["rows"][0]
+    assert "_raw_trPr" in row0_ast, "Parser must capture _raw_trPr for rows"
+    assert "720" in row0_ast["_raw_trPr"], "_raw_trPr must contain height value"
+
+    render_ast(ast, out)
+
+    rebuilt = Document(out)
+    tr_out = rebuilt.tables[0].rows[0]._tr
+    trPr_out = tr_out.find(qn("w:trPr"))
+    assert trPr_out is not None
+    trHeight_out = trPr_out.find(qn("w:trHeight"))
+    assert trHeight_out is not None, "<w:trHeight> must be restored in rendered row"
+    assert trHeight_out.get(qn("w:val")) == "720"

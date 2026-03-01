@@ -1,4 +1,5 @@
 import base64
+import copy
 import io
 
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -22,7 +23,9 @@ def _apply_raw_rPr(run, raw_rPr: str) -> None:
         new_rPr = parse_xml(raw_rPr)
     except Exception:
         return
-    for tag in (qn("w:rStyle"), qn("w:rPrChange")):
+    # Only remove rPrChange (revision-tracking); keep rStyle so run-level
+    # character styles are preserved during the round-trip.
+    for tag in (qn("w:rPrChange"),):
         el = new_rPr.find(tag)
         if el is not None:
             new_rPr.remove(el)
@@ -38,10 +41,25 @@ def _apply_raw_pPr(paragraph, raw_pPr: str) -> None:
         new_pPr = parse_xml(raw_pPr)
     except Exception:
         return
-    for tag in (qn("w:pStyle"), qn("w:numPr"), qn("w:sectPr"), qn("w:pPrChange")):
+    # Only remove elements that could conflict; keep pStyle so that the
+    # paragraph style is preserved from the round-tripped _raw_pPr.
+    # numPr / sectPr / pPrChange are excluded to avoid list-numbering
+    # and section-break duplication.
+    for tag in (qn("w:numPr"), qn("w:sectPr"), qn("w:pPrChange")):
         el = new_pPr.find(tag)
         if el is not None:
             new_pPr.remove(el)
+
+    # If _raw_pPr carries no pStyle (e.g. the original paragraph inherited its
+    # style only implicitly), copy the pStyle that was already written by
+    # _apply_paragraph_style so we don't lose style information.
+    if new_pPr.find(qn("w:pStyle")) is None:
+        current_pPr = paragraph._element.find(qn("w:pPr"))
+        if current_pPr is not None:
+            existing_pStyle = current_pPr.find(qn("w:pStyle"))
+            if existing_pStyle is not None:
+                new_pPr.insert(0, copy.deepcopy(existing_pStyle))
+
     p_el = paragraph._element
     old_pPr = p_el.find(qn("w:pPr"))
     if old_pPr is not None:
@@ -124,8 +142,11 @@ def _apply_run_overrides(run, overrides: dict) -> None:
 
 def render_paragraph(doc, block: dict, styles: dict | None = None):
     paragraph = doc.add_paragraph()
-    _apply_paragraph_format(paragraph, block.get("paragraph_format", {}))
+    # Apply style first so that _apply_raw_pPr (called inside
+    # _apply_paragraph_format) can find the already-set <w:pStyle> element and
+    # preserve it if the raw_pPr itself carries no pStyle.
     _apply_paragraph_style(paragraph, block.get("style"), styles)
+    _apply_paragraph_format(paragraph, block.get("paragraph_format", {}))
 
     for piece in block.get("content", []):
         if piece.get("type") == "InlineImage":
