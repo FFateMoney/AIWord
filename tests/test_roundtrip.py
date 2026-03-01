@@ -95,10 +95,11 @@ def test_roundtrip_preserves_paragraph_style_font_defaults(tmp_path: Path):
     para = rebuilt.paragraphs[0]
     assert para.text == "Styled title"
     assert para.style.name == "Heading 1"
-    # Runs without explicit formatting should NOT have explicit overrides;
-    # they inherit from the paragraph style, avoiding fake-bold artifacts.
+    # _inherit_style_rPr now captures font info from the style into _raw_rPr so
+    # that fonts are preserved even when rendering into a document with different
+    # style defaults.  The effective font must still be the one set on the style.
     run = para.runs[0]
-    assert run.font.name is None
+    assert run.font.name == "Arial"
 
 
 def _get_east_asia_font(run) -> str | None:
@@ -217,8 +218,10 @@ def test_roundtrip_style_defaults_with_run_overrides(tmp_path: Path):
     assert para.style.name == "Heading 1"
     runs = para.runs
 
-    # Run 1: no explicit overrides — inherits everything from the style
-    assert runs[0].font.name is None
+    # Run 1: _inherit_style_rPr captures the style font into _raw_rPr so the
+    # effective font is "Arial" (explicitly from inherited _raw_rPr).  Bold is
+    # not in _INHERITABLE_RPR_TAGS so it still inherits from the style.
+    assert runs[0].font.name == "Arial"
     assert runs[0].bold is None
 
     # Run 2: only color overridden; other properties inherit from style
