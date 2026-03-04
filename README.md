@@ -100,6 +100,34 @@ from word_ast import parse_docx, render_ast, to_ai_view, merge_ai_edits
 
 ---
 
+## Web 前端（最小可运行页面）
+
+`web/` 目录包含一个无需构建工具、可直接在浏览器中运行的最小前端页面，提供：
+
+- **API 配置持久化**：在模态框中填写 API Key / Provider / Base URL / Model 后点击「保存」，配置会写入 `localStorage`（键前缀 `webaiword:v1:`），刷新页面后自动填充。
+- **文档编辑状态持久化**：在编辑区修改 `ai_view` JSON 后，内容会在 800ms 内自动保存到 `localStorage`，刷新页面后出现「恢复上次编辑」提示条，一键恢复。
+- **清除本地缓存**：工具栏提供「🗑️ 清除本地缓存」按钮，一键删除所有 `webaiword:v1:` 前缀的键；也可在恢复提示条中点击「忽略并清除」仅清除文档缓存。
+- **安全提示**：API Key 配置模态框内注明"仅保存在本机 localStorage，不会上传"。
+
+### 启动方式
+
+```bash
+cd web
+python -m http.server 8080
+# 然后在浏览器打开 http://localhost:8080
+```
+
+> **注**：由于使用了 ES 模块（`type="module"`），需要通过 HTTP 服务器访问，不能直接以 `file://` 协议打开。
+
+### 工作流程
+
+1. 用 Python 命令行导出 `ai_view.json`（见「场景 A」）。
+2. 在浏览器中点击「📂 导入 ai_view」，选择生成的 JSON 文件——内容会自动保存到 `localStorage`。
+3. 在编辑区修改 JSON，改动在 800ms 内自动持久化。
+4. 刷新页面后，页面顶部出现提示条，点击「恢复上次编辑」即可继续。
+
+---
+
 ## 运行测试
 
 ```bash

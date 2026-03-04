@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebAIWord — AI 辅助 Word 编辑器</title>
+  <link rel="stylesheet" href="./src/style.css" />
+</head>
+<body>
+
+  <!-- ── 顶部工具栏 ── -->
+  <header id="toolbar">
+    <div class="toolbar-brand">📝 WebAIWord</div>
+    <div class="toolbar-actions">
+      <!-- 导入 ai_view JSON 文件 -->
+      <button id="btn-import" title="导入 ai_view JSON 文件">📂 导入 ai_view</button>
+      <!-- 打开 API 配置模态框 -->
+      <button id="btn-apikey" title="配置 AI API Key / Base URL">⚙️ API 配置</button>
+      <!-- 清除本地缓存 -->
+      <button id="btn-clear-cache" class="danger" title="清除所有本地缓存（API Key + 文档内容）">🗑️ 清除本地缓存</button>
+    </div>
+  </header>
+
+  <!-- ── 恢复上次编辑提示条 ── -->
+  <div id="restore-banner" class="hidden" role="alert">
+    <span>📋 检测到上次编辑的文档：<strong id="restore-doc-name"></strong></span>
+    <button id="btn-restore">恢复上次编辑</button>
+    <button id="btn-dismiss">忽略并清除</button>
+  </div>
+
+  <!-- ── 主内容区 ── -->
+  <main id="content">
+    <!-- ai_view JSON 编辑区 -->
+    <div id="editor-wrapper">
+      <label for="editor">ai_view JSON 编辑区（刷新后自动恢复）</label>
+      <textarea
+        id="editor"
+        spellcheck="false"
+        placeholder='粘贴或导入 ai_view JSON，例如：{"document":{"body":[...]}}'
+      ></textarea>
+    </div>
+    <!-- 状态栏 -->
+    <div id="status-bar" aria-live="polite"></div>
+  </main>
+
+  <!-- ── API Key 配置模态框 ── -->
+  <div id="modal-apikey" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-content">
+      <h3 id="modal-title">配置 AI API</h3>
+
+      <label>Provider
+        <select id="select-provider">
+          <option value="openai">OpenAI</option>
+          <option value="claude">Claude (Anthropic)</option>
+          <option value="custom">自定义 Base URL</option>
+        </select>
+      </label>
+
+      <label>API Key
+        <input type="password" id="input-apikey" placeholder="sk-..." autocomplete="off" />
+      </label>
+
+      <label id="label-baseurl" class="hidden">Base URL
+        <input type="url" id="input-baseurl" placeholder="https://api.example.com/v1" />
+      </label>
+
+      <label>Model
+        <input type="text" id="input-model" placeholder="gpt-4o" />
+      </label>
+
+      <!-- 安全提示 -->
+      <p class="modal-hint">
+        🔒 API Key 将保存在本地浏览器的 localStorage 中，仅本机可见，不会上传到任何服务器。
+        如需清除，请点击工具栏的「🗑️ 清除本地缓存」按钮。
+      </p>
+
+      <div class="modal-actions">
+        <button id="btn-close-modal">取消</button>
+        <button id="btn-save-apikey">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 隐藏的文件输入（ai_view JSON） -->
+  <input type="file" id="file-input" accept=".json" style="display:none" />
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
