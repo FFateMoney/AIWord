@@ -60,6 +60,24 @@ python scripts/ai_edit.py render -V new_doc.json -O output.docx
 
 ---
 
+## 场景 C：仅导出结构化内容给 AI 阅读
+
+当 AI 只需要理解文档内容，不需要格式信息时，可以导出内容视图：
+
+```bash
+python scripts/ai_edit.py export-content -I report.docx -O ./out/
+```
+
+产出：
+- `out/report.content_view.json` — 面向内容理解的结构化 JSON
+
+特点：
+- 保留段落、标题、表格等结构
+- 去掉样式、段落格式、run 格式和 `_raw_*` XML
+- 图片保留 base64 二进制数据，方便 AI 感知图文内容
+
+---
+
 ## 命令参考
 
 ### export 子命令
@@ -68,6 +86,13 @@ python scripts/ai_edit.py render -V new_doc.json -O output.docx
 |------|------|------|
 | `--input` | `-I` | 输入 .docx 文件路径 |
 | `--outdir` | `-O` | 输出目录（自动生成两个 JSON 文件）|
+
+### export-content 子命令
+
+| 参数 | 简写 | 说明 |
+|------|------|------|
+| `--input` | `-I` | 输入 .docx 文件路径 |
+| `--outdir` | `-O` | 输出目录（自动生成 `<stem>.content_view.json`）|
 
 ### render 子命令
 
@@ -90,11 +115,12 @@ python scripts/ai_edit.py render -V new_doc.json -O output.docx
 ## Python API（面向开发者）
 
 ```python
-from word_ast import parse_docx, render_ast, to_ai_view, merge_ai_edits
+from word_ast import parse_docx, render_ast, to_ai_view, merge_ai_edits, to_content_view
 ```
 
 - `parse_docx(path)` — docx → 完整 AST（含 _raw_*）
 - `to_ai_view(ast)` — 完整 AST → AI 视图（去掉 _raw_*）
+- `to_content_view(ast)` — 完整 AST → 内容视图（仅保留结构化内容与图片数据）
 - `merge_ai_edits(full_ast, ai_view)` — 将 AI 修改合并回完整 AST
 - `render_ast(ast, output_path)` — AST → docx
 
